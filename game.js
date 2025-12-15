@@ -2,255 +2,260 @@ const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 const W = canvas.width, H = canvas.height;
 
-let best = Number(localStorage.getItem("peekBest") || 0);
+let best = Number(localStorage.getItem("buzzerBest") || 0);
 
 const state = {
   running: true,
   score: 0,
 
-  // Peek is now a "bounce" (auto up, auto down)
-  peek: 0,            // 0..1 current peek amount
-  peekTarget: 0,      // where peek is trying to go
-  peekId: 0,          // increments each peek event
-  scoredPeekId: -1,   // last peekId we scored
+  // Jump animation (0..1). Each jump is a single burst.
+  jump: 0,
+  jumping: false,
+  jumpId: 0,
+  scoredJumpId: -1,
 
-  axe: { t: 0, speed: 1.6 },
+  // Axe swing
+  axe: { t: 0, baseSpeed: 1.6, speed: 1.6 },
 
   // gesture tracking
-  gesture: {
-    active: false,
-    startX: 0,
-    startY: 0,
-    startT: 0,
-    maxDy: 0
-  },
+  gesture: { active: false, startY: 0, startT: 0, maxDy: 0 },
 
   cooldown: 0
 };
 
-function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+function easeOutQuad(x){ return 1 - (1 - x) * (1 - x); }
 
-function reset() {
+function reset(){
   state.running = true;
   state.score = 0;
-  state.peek = 0;
-  state.peekTarget = 0;
-  state.peekId = 0;
-  state.scoredPeekId = -1;
+
+  state.jump = 0;
+  state.jumping = false;
+  state.jumpId = 0;
+  state.scoredJumpId = -1;
+
   state.axe.t = 0;
+  state.axe.baseSpeed = 1.6;
   state.axe.speed = 1.6;
+
   state.cooldown = 0;
 }
 
-// Swing position + angle (more like a pendulum feel)
-function swingAngle() {
-  // angle in radians
-  return 0.95 * Math.sin(state.axe.t); // ~54 degrees max
+function updateAxeSpeed(){
+  // Every 5 points => +5% speed (multiplicative)
+  const steps = Math.floor(state.score / 5);
+  state.axe.speed = state.axe.baseSpeed * Math.pow(1.05, steps);
 }
 
-function isDangerZone(peekAmount) {
-  const coverY = H * 0.66;
+function swingAngle(){
+  return 0.95 * Math.sin(state.axe.t);
+}
 
-  // Peasant "peeks" by rising from crouch (no jump vibe)
-  // Head becomes visible only when peek is high
-  const crouchHeadY = coverY + 30;             // hidden behind cover
-  const peekHeadY   = coverY - 90;             // visible head height
-  const headY = crouchHeadY + (peekHeadY - crouchHeadY) * peekAmount;
+// --- World layout ---
+function coverY(){ return H * 0.72; }        // ground/cover line
+function peasantX(){ return W / 2; }
+function peasantStandHeadY(){
+  // standing head position
+  return coverY() - 85;
+}
 
-  const headVisible = peekAmount > 0.50;
+function buzzerY(){
+  // buzzer is above peasant head
+  return peasantStandHeadY() - 110;
+}
 
-  // Axe blade hit zone: near the bottom of the swing
-  const ropeTopY = coverY - 260;
-  const ropeLen = 210;
+function understandingLineY(){
+  // little visual band where the axe passes
+  return coverY() - 240;
+}
 
+// Jump curve: jumpAmount 0..1 => height amount 0..1
+function jumpHeightAmount(j){
+  // fast up, slow down
+  return easeOutQuad(j);
+}
+
+function peasantHeadY(){
+  const base = peasantStandHeadY();
+  const maxUp = 150; // how high the peasant can jump
+  return base - jumpHeightAmount(state.jump) * maxUp;
+}
+
+// Axe blade world position (above peasant head)
+function axeBladePos(){
+  const topY = understandingLineY();
+  const ropeLen = 180;
   const a = swingAngle();
-  // blade center approx at end of rope
-  const bladeX = W / 2 + Math.sin(a) * ropeLen;
-  const bladeY = ropeTopY + Math.cos(a) * ropeLen + 95; // blade sits below handle end
 
-  // Danger zone centered around peasant position (middle)
-  const dangerX = Math.abs(bladeX - W / 2) < 60;
-  const dangerY = Math.abs(bladeY - headY) < 85;
+  const ropeTopX = W / 2;
+  const ropeTopY = topY;
 
-  return headVisible && dangerX && dangerY;
+  // handle top = rope end
+  const hx = ropeTopX + Math.sin(a) * ropeLen;
+  const hy = ropeTopY + Math.cos(a) * ropeLen;
+
+  // blade approx lower than rope end
+  return { x: hx, y: hy + 110, a };
 }
 
-// --- Snap-style peek "burst"
-function triggerPeekBurst() {
-  if (!state.running) return;
+// Collision: if head is up and axe is near center of peasant
+function isClipped(){
+  const headY = peasantHeadY();
+  const headVisible = state.jumping && state.jump > 0.25;
+
+  if (!headVisible) return false;
+
+  const blade = axeBladePos();
+
+  const dx = Math.abs(blade.x - peasantX());
+  const dy = Math.abs(blade.y - headY);
+
+  // tune difficulty:
+  return dx < 55 && dy < 70;
+}
+
+function hitBuzzer(){
+  // "gold point buzzer" hit: head gets close enough to buzzer Y
+  const headY = peasantHeadY();
+  return headY <= buzzerY() + 10;
+}
+
+// --- Trigger jump ---
+function triggerJump(){
+  if (!state.running) { reset(); return; }
   if (state.cooldown > 0) return;
+  if (state.jumping) return; // one jump at a time
 
-  state.peekId++;
-  state.peekTarget = 1;
-  state.cooldown = 0.35; // seconds
-
-  setTimeout(() => {
-    state.peekTarget = 0;
-  }, 240);
+  state.jumping = true;
+  state.jump = 0;
+  state.jumpId++;
+  state.cooldown = 0.22;
 }
 
-function update(dt) {
+function update(dt){
   if (state.cooldown > 0) state.cooldown = Math.max(0, state.cooldown - dt);
 
-  if (state.running) {
+  if (state.running){
     state.axe.t += dt * state.axe.speed;
-    state.axe.speed = 1.6 + state.score * 0.06;
   }
 
-  // Smooth peek motion (rise + return to crouch)
-  const speedUp = 11.0;
-  const speedDown = 8.0;
-  const s = (state.peekTarget > state.peek) ? speedUp : speedDown;
-  state.peek += (state.peekTarget - state.peek) * (1 - Math.exp(-s * dt));
-  state.peek = clamp(state.peek, 0, 1);
+  // Jump progresses automatically
+  if (state.jumping){
+    // duration of the jump (seconds)
+    const jumpDuration = 0.42;
+    state.jump += dt / jumpDuration;
 
-  if (state.running && isDangerZone(state.peek)) {
-    state.running = false;
-  }
+    if (state.jump >= 1){
+      state.jump = 1;
+    }
 
-  // Score once per peek burst if you got visibly up safely
-  const visible = state.peek > 0.62;
-  const safe = !isDangerZone(state.peek);
+    // Lose check while in air
+    if (state.running && isClipped()){
+      state.running = false;
+    }
 
-  if (state.running && visible && safe && state.scoredPeekId !== state.peekId) {
-    state.score++;
-    state.scoredPeekId = state.peekId;
+    // Score rule: once per jump, if you reach the buzzer safely
+    const reached = hitBuzzer();
+    const safe = !isClipped();
 
-    if (state.score > best) {
-      best = state.score;
-      localStorage.setItem("peekBest", String(best));
+    if (state.running && reached && safe && state.scoredJumpId !== state.jumpId){
+      state.score++;
+      state.scoredJumpId = state.jumpId;
+
+      if (state.score > best){
+        best = state.score;
+        localStorage.setItem("buzzerBest", String(best));
+      }
+
+      updateAxeSpeed();
+    }
+
+    // End jump: once it hits the top and falls back (we fake by just ending after 1)
+    if (state.jump >= 1){
+      state.jumping = false;
+      state.jump = 0;
     }
   }
 }
 
-function drawBackground() {
+// --- Drawing (medieval-ish) ---
+function drawBackground(){
   const g = ctx.createLinearGradient(0, 0, 0, H);
   g.addColorStop(0, "#0b1220");
   g.addColorStop(1, "#071018");
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, W, H);
 
-  // header bar
   ctx.fillStyle = "rgba(255,255,255,0.06)";
   ctx.fillRect(0, 0, W, 70);
   ctx.fillStyle = "#fff";
   ctx.font = "bold 18px system-ui";
-  ctx.fillText("Peek & Dodge", 16, 42);
+  ctx.fillText("Jump & Buzzer", 16, 42);
 
   ctx.font = "14px system-ui";
   ctx.fillText(`Score: ${state.score}   Best: ${best}`, W - 175, 42);
 
-  // pull zone
   ctx.fillStyle = "rgba(255,255,255,0.05)";
-  ctx.fillRect(0, 70, W, 120);
+  ctx.fillRect(0, 70, W, 105);
   ctx.fillStyle = "rgba(255,255,255,0.14)";
   ctx.font = "12px system-ui";
-  ctx.fillText("Pull down here to peek", 16, 105);
+  ctx.fillText("Tap or pull down to jump (timing game)", 16, 105);
 }
 
-function drawCover(coverY) {
-  // Stone wall / cover
+function drawGround(){
+  const y = coverY();
   ctx.fillStyle = "#0a0a0a";
-  ctx.fillRect(0, coverY, W, H - coverY);
-
-  // edge highlight
+  ctx.fillRect(0, y, W, H - y);
   ctx.fillStyle = "rgba(255,255,255,0.08)";
-  ctx.fillRect(0, coverY, W, 8);
+  ctx.fillRect(0, y, W, 8);
+}
 
-  // simple stone brick pattern
-  ctx.globalAlpha = 0.12;
-  ctx.strokeStyle = "#ffffff";
-  ctx.lineWidth = 1;
-  for (let y = coverY + 18; y < H; y += 34) {
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(W, y);
-    ctx.stroke();
-  }
-  for (let x = 0; x < W; x += 54) {
-    ctx.beginPath();
-    ctx.moveTo(x, coverY);
-    ctx.lineTo(x, H);
-    ctx.stroke();
-  }
+function drawBuzzer(){
+  const x = peasantX();
+  const y = buzzerY();
+
+  // glow
+  const r = 14;
+  ctx.save();
+  ctx.globalAlpha = 0.25;
+  ctx.fillStyle = "#f1c40f";
+  ctx.beginPath();
+  ctx.arc(x, y, r + 18, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // gold button
+  const gold = ctx.createLinearGradient(x - 20, y - 20, x + 20, y + 20);
+  gold.addColorStop(0, "#fff4a8");
+  gold.addColorStop(0.45, "#f1c40f");
+  gold.addColorStop(1, "#a87800");
+  ctx.fillStyle = gold;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+
+  // shine
+  ctx.globalAlpha = 0.35;
+  ctx.fillStyle = "#fff";
+  ctx.beginPath();
+  ctx.arc(x - 5, y - 6, 5, 0, Math.PI * 2);
+  ctx.fill();
   ctx.globalAlpha = 1;
 }
 
-function drawPeasant(coverY) {
-  // Crouch → peek rise (feels like standing up a bit, not jumping)
-  const t = state.peek;
-  const x = W / 2;
-
-  const crouchY = coverY + 40;
-  const peekY = coverY - 70;
-  const bodyY = crouchY + (peekY - crouchY) * t;
-
-  // shadow
-  ctx.fillStyle = "rgba(0,0,0,0.25)";
-  ctx.beginPath();
-  ctx.ellipse(x, coverY + 18, 70, 18, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // hood (peasant)
-  const headR = 16;
-  const headY = bodyY - 38;
-
-  // hood outer
-  ctx.fillStyle = "#3b2e22";
-  ctx.beginPath();
-  ctx.arc(x, headY, headR + 6, 0, Math.PI * 2);
-  ctx.fill();
-
-  // face
-  ctx.fillStyle = "#d7b38c";
-  ctx.beginPath();
-  ctx.arc(x, headY + 3, headR, 0, Math.PI * 2);
-  ctx.fill();
-
-  // eyes
-  ctx.fillStyle = "#111";
-  ctx.beginPath(); ctx.arc(x - 6, headY, 2.6, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(x + 6, headY, 2.6, 0, Math.PI * 2); ctx.fill();
-
-  // tunic/body
-  const bodyW = 56;
-  const bodyH = 60;
-  ctx.fillStyle = "#5a3d2b";
-  ctx.beginPath();
-  ctx.roundRect(x - bodyW / 2, bodyY - 18, bodyW, bodyH, 10);
-  ctx.fill();
-
-  // belt
-  ctx.fillStyle = "#2b1b12";
-  ctx.fillRect(x - bodyW / 2, bodyY + 12, bodyW, 6);
-
-  // arms tucked (crouching)
-  ctx.strokeStyle = "#3b2e22";
-  ctx.lineWidth = 8;
-  ctx.lineCap = "round";
-  ctx.beginPath();
-  ctx.moveTo(x - 24, bodyY + 18);
-  ctx.lineTo(x - 10, bodyY + 30);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(x + 24, bodyY + 18);
-  ctx.lineTo(x + 10, bodyY + 30);
-  ctx.stroke();
-}
-
-// Medieval axe: rope + handle + shaded head
-function drawAxe(coverY) {
-  const ropeTopX = W / 2;
-  const ropeTopY = coverY - 260;
-  const ropeLen = 210;
-
+function drawAxe(){
+  const topY = understandingLineY();
+  const ropeLen = 180;
   const a = swingAngle();
 
-  // Rope end (handle top)
+  const ropeTopX = W / 2;
+  const ropeTopY = topY;
+
   const hx = ropeTopX + Math.sin(a) * ropeLen;
   const hy = ropeTopY + Math.cos(a) * ropeLen;
 
-  // Rope
+  // rope
   ctx.strokeStyle = "#c8b48a";
   ctx.lineWidth = 4;
   ctx.lineCap = "round";
@@ -259,60 +264,32 @@ function drawAxe(coverY) {
   ctx.lineTo(hx, hy);
   ctx.stroke();
 
-  // Rope twist hint
-  ctx.globalAlpha = 0.25;
-  ctx.strokeStyle = "#6b5b3d";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(ropeTopX, ropeTopY + 10);
-  ctx.lineTo(hx, hy);
-  ctx.stroke();
-  ctx.globalAlpha = 1;
-
-  // Handle (wood)
+  // handle
   const handleLen = 150;
-  const handleEndX = hx + Math.sin(a) * handleLen;
-  const handleEndY = hy + Math.cos(a) * handleLen;
+  const ex = hx + Math.sin(a) * handleLen;
+  const ey = hy + Math.cos(a) * handleLen;
 
   ctx.strokeStyle = "#b78a53";
   ctx.lineWidth = 14;
   ctx.beginPath();
   ctx.moveTo(hx, hy);
-  ctx.lineTo(handleEndX, handleEndY);
+  ctx.lineTo(ex, ey);
   ctx.stroke();
 
-  // Handle grip wrap
-  ctx.globalAlpha = 0.35;
-  ctx.strokeStyle = "#6b4a2a";
-  ctx.lineWidth = 4;
-  for (let i = 0; i < 7; i++) {
-    const t = i / 7;
-    const px = hx + (handleEndX - hx) * (0.55 + t * 0.35);
-    const py = hy + (handleEndY - hy) * (0.55 + t * 0.35);
-    ctx.beginPath();
-    ctx.moveTo(px - 10, py + 4);
-    ctx.lineTo(px + 10, py - 4);
-    ctx.stroke();
-  }
-  ctx.globalAlpha = 1;
+  // axe head
+  const headCX = hx + (ex - hx) * 0.78;
+  const headCY = hy + (ey - hy) * 0.78;
 
-  // Axe head (metal), positioned near lower handle
-  const headCX = hx + (handleEndX - hx) * 0.78;
-  const headCY = hy + (handleEndY - hy) * 0.78;
-
-  // rotate drawing around head by angle a
   ctx.save();
   ctx.translate(headCX, headCY);
   ctx.rotate(a);
 
-  // Metal head base
   const metal = ctx.createLinearGradient(-40, -20, 40, 20);
   metal.addColorStop(0, "#f4f6fb");
   metal.addColorStop(0.45, "#b9c1cd");
   metal.addColorStop(1, "#5a6472");
   ctx.fillStyle = metal;
 
-  // main head shape
   ctx.beginPath();
   ctx.moveTo(-10, -18);
   ctx.lineTo(16, -10);
@@ -322,7 +299,6 @@ function drawAxe(coverY) {
   ctx.closePath();
   ctx.fill();
 
-  // Blade
   const blade = ctx.createLinearGradient(10, -25, 55, 25);
   blade.addColorStop(0, "#ffffff");
   blade.addColorStop(0.5, "#cfd7e3");
@@ -337,151 +313,139 @@ function drawAxe(coverY) {
   ctx.closePath();
   ctx.fill();
 
-  // blade edge highlight
-  ctx.globalAlpha = 0.5;
-  ctx.strokeStyle = "#ffffff";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(56, -10);
-  ctx.lineTo(56, 10);
-  ctx.stroke();
-  ctx.globalAlpha = 1;
-
-  // rivet / hole detail
-  ctx.fillStyle = "rgba(0,0,0,0.25)";
-  ctx.beginPath();
-  ctx.arc(6, 0, 4, 0, Math.PI * 2);
-  ctx.fill();
-
   ctx.restore();
 }
 
-function draw() {
+function drawPeasant(){
+  const x = peasantX();
+  const headY = peasantHeadY();
+
+  // body anchor (standing)
+  const bodyY = headY + 55;
+
+  // shadow
+  ctx.fillStyle = "rgba(0,0,0,0.25)";
+  ctx.beginPath();
+  ctx.ellipse(x, coverY() + 16, 75, 18, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // hood
+  ctx.fillStyle = "#3b2e22";
+  ctx.beginPath();
+  ctx.arc(x, headY, 22, 0, Math.PI * 2);
+  ctx.fill();
+
+  // face
+  ctx.fillStyle = "#d7b38c";
+  ctx.beginPath();
+  ctx.arc(x, headY + 4, 16, 0, Math.PI * 2);
+  ctx.fill();
+
+  // eyes
+  ctx.fillStyle = "#111";
+  ctx.beginPath(); ctx.arc(x - 6, headY + 2, 2.6, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x + 6, headY + 2, 2.6, 0, Math.PI * 2); ctx.fill();
+
+  // tunic
+  ctx.fillStyle = "#5a3d2b";
+  ctx.beginPath();
+  ctx.roundRect(x - 30, bodyY - 10, 60, 78, 12);
+  ctx.fill();
+
+  // belt
+  ctx.fillStyle = "#2b1b12";
+  ctx.fillRect(x - 30, bodyY + 20, 60, 6);
+
+  // legs (standing)
+  ctx.strokeStyle = "#3b2e22";
+  ctx.lineWidth = 10;
+  ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(x - 12, bodyY + 68); ctx.lineTo(x - 12, coverY() + 10); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x + 12, bodyY + 68); ctx.lineTo(x + 12, coverY() + 10); ctx.stroke();
+}
+
+function draw(){
   ctx.clearRect(0, 0, W, H);
 
-  const coverY = H * 0.66;
-
   drawBackground();
+  drawBuzzer();
+  drawAxe();
+  drawGround();
+  drawPeasant();
 
-  // Subtle danger hint band (optional readability)
-  const danger = isDangerZone(state.peek);
-  ctx.fillStyle = danger ? "rgba(255,0,0,0.14)" : "rgba(0,255,0,0.06)";
-  ctx.fillRect(0, coverY - 210, W, 210);
+  // subtle danger band for readability
+  ctx.fillStyle = isClipped() ? "rgba(255,0,0,0.12)" : "rgba(0,255,0,0.05)";
+  ctx.fillRect(0, understandingLineY() + 40, W, 220);
 
-  drawAxe(coverY);
-  drawCover(coverY);
-  drawPeasant(coverY);
-
-  if (!state.running) {
+  if (!state.running){
     ctx.fillStyle = "rgba(0,0,0,0.55)";
     ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = "#fff";
     ctx.font = "bold 28px system-ui";
     ctx.fillText("Clipped! 💀", 145, 310);
     ctx.font = "16px system-ui";
-    ctx.fillText("Pull down to try again", 140, 345);
+    ctx.fillText("Tap or pull down to restart", 120, 345);
   }
 }
 
 // Main loop
 let last = performance.now();
-function loop(now) {
+function loop(now){
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
-
   update(dt);
   draw();
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
 
-// --- Controls ---
-// iOS Safari: add touch fallback + preventDefault to ensure responsiveness.
-
-function gestureStart(x, y) {
+// --- Controls (mobile-safe) ---
+function gestureStart(y){
   state.gesture.active = true;
-  state.gesture.startX = x;
   state.gesture.startY = y;
   state.gesture.startT = performance.now();
   state.gesture.maxDy = 0;
 }
-
-function gestureMove(x, y) {
+function gestureMove(y){
   if (!state.gesture.active) return;
   const dy = y - state.gesture.startY;
   state.gesture.maxDy = Math.max(state.gesture.maxDy, dy);
 }
-
-function gestureEnd() {
+function gestureEnd(){
   if (!state.gesture.active) return;
   state.gesture.active = false;
 
-  const startY = state.gesture.startY;
   const elapsedMs = performance.now() - state.gesture.startT;
   const pulled = state.gesture.maxDy;
 
-  const startedInTopZone = startY < 190;
-  const pulledEnough = pulled > 65;
+  const pulledEnough = pulled > 55;
   const quickEnough = elapsedMs < 450;
 
-  if (state.running && startedInTopZone && pulledEnough && quickEnough) {
-    triggerPeekBurst();
-  } else if (!state.running && startedInTopZone && pulledEnough) {
-    // quick restart on mobile after death
-    reset();
-  }
+  if (pulledEnough && quickEnough) triggerJump();
 }
 
 // Pointer events
-canvas.addEventListener("pointerdown", (e) => {
-  e.preventDefault();
-  gestureStart(e.clientX, e.clientY);
-}, { passive: false });
-
-canvas.addEventListener("pointermove", (e) => {
-  e.preventDefault();
-  gestureMove(e.clientX, e.clientY);
-}, { passive: false });
-
-canvas.addEventListener("pointerup", (e) => {
-  e.preventDefault();
-  gestureEnd();
-}, { passive: false });
-
-canvas.addEventListener("pointercancel", () => {
-  state.gesture.active = false;
-});
+canvas.addEventListener("pointerdown", (e) => { e.preventDefault(); gestureStart(e.clientY); }, { passive:false });
+canvas.addEventListener("pointermove", (e) => { e.preventDefault(); gestureMove(e.clientY); }, { passive:false });
+canvas.addEventListener("pointerup",   (e) => { e.preventDefault(); gestureEnd(); }, { passive:false });
 
 // Touch fallback
-canvas.addEventListener("touchstart", (e) => {
-  e.preventDefault();
-  const t = e.changedTouches[0];
-  gestureStart(t.clientX, t.clientY);
-}, { passive: false });
+canvas.addEventListener("touchstart", (e) => { e.preventDefault(); gestureStart(e.changedTouches[0].clientY); }, { passive:false });
+canvas.addEventListener("touchmove",  (e) => { e.preventDefault(); gestureMove(e.changedTouches[0].clientY); }, { passive:false });
+canvas.addEventListener("touchend",   (e) => { e.preventDefault(); gestureEnd(); }, { passive:false });
 
-canvas.addEventListener("touchmove", (e) => {
-  e.preventDefault();
-  const t = e.changedTouches[0];
-  gestureMove(t.clientX, t.clientY);
-}, { passive: false });
-
-canvas.addEventListener("touchend", (e) => {
-  e.preventDefault();
-  gestureEnd();
-}, { passive: false });
-
-canvas.addEventListener("touchcancel", () => {
-  state.gesture.active = false;
+// Simple TAP to jump (nice usability on phone)
+canvas.addEventListener("click", (e) => {
+  // click fires on desktop + mobile after touchend; safe to allow
+  triggerJump();
 });
 
-// Keyboard helpers (desktop)
+// Desktop keys
 window.addEventListener("keydown", (e) => {
   if (e.key.toLowerCase() === "r") reset();
-  if (e.code === "Space") {
-    e.preventDefault();
-    triggerPeekBurst();
-  }
+  if (e.code === "Space") { e.preventDefault(); triggerJump(); }
 });
 
 // Init
 reset();
+updateAxeSpeed();
