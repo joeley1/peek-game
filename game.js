@@ -41,10 +41,15 @@ const Game = {
 
   speedLevel: 0,
 
-  // NEW: overlay + boost effects
+  // overlay + boost effects
   overlayText: "",
-  overlayT: 0,     // seconds remaining
-  boostT: 0        // 0..1 intensity timer
+  overlayT: 0,
+  boostT: 0,
+
+  // game over popup state
+  justDied: false,
+  diedBestBefore: 0,   // best at the moment you died
+  diedNewBest: false  // whether this run set a new best
 };
 
 const Lanes = 3;
@@ -73,14 +78,18 @@ function reset() {
   Game.overlayT = 0;
   Game.boostT = 0;
 
+  Game.justDied = false;
+  Game.diedBestBefore = 0;
+  Game.diedNewBest = false;
+
   Player.lane = 1;
   Obstacles = [];
 }
 
 function showLevelUpOverlay() {
   Game.overlayText = "+20% SPEED!";
-  Game.overlayT = 0.85;   // show for ~0.85s
-  Game.boostT = 0.35;     // flash/boost for ~0.35s
+  Game.overlayT = 0.85;
+  Game.boostT = 0.35;
 }
 
 function switchLane() {
@@ -98,6 +107,34 @@ function hitTest(obs) {
   const px = laneX(Player.lane), py = Player.y;
   const ox = laneX(obs.lane), oy = obs.y;
   return Math.hypot(px - ox, py - oy) < Player.r + obs.r;
+}
+
+function die() {
+  // snapshot what happened for the popup
+  const bestBefore = Game.best;
+
+  // first-time run: if best is 0, this establishes it
+  let newBest = bestBefore;
+  let isNew = false;
+
+  if (Game.score > bestBefore) {
+    newBest = Game.score;
+    isNew = true;
+  } else if (bestBefore === 0 && Game.score >= 0) {
+    // if they've never played before, after first death store a best
+    newBest = Math.max(bestBefore, Game.score);
+    // treat this as establishing a best if score > 0
+    isNew = (Game.score > 0);
+  }
+
+  Game.diedBestBefore = bestBefore;
+  Game.diedNewBest = isNew;
+
+  Game.best = Math.max(bestBefore, newBest);
+  localStorage.setItem("odBest", String(Game.best));
+
+  Game.running = false;
+  Game.justDied = true;
 }
 
 function update(dt) {
@@ -120,11 +157,9 @@ function update(dt) {
   // move obstacles + collision
   for (const o of Obstacles) {
     o.y += Game.speed * dt;
-
     if (hitTest(o)) {
-      Game.running = false;
-      Game.best = Math.max(Game.best, Game.score);
-      localStorage.setItem("odBest", String(Game.best));
+      die();
+      break;
     }
   }
 
@@ -141,10 +176,61 @@ function update(dt) {
     if (newLevel !== Game.speedLevel) {
       Game.speedLevel = newLevel;
       Game.speed = Game.baseSpeed * Math.pow(1.20, Game.speedLevel);
-
       showLevelUpOverlay();
     }
   }
+}
+
+function drawPopupMenu() {
+  // centered popup
+  const boxW = 290;
+  const boxH = 190;
+  const x = (W - boxW) / 2;
+  const y = (H - boxH) / 2;
+
+  // panel
+  ctx.fillStyle = "rgba(0,0,0,0.65)";
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = "rgba(20,20,30,0.92)";
+  ctx.fillRect(x, y, boxW, boxH);
+
+  // border
+  ctx.strokeStyle = "rgba(255,255,255,0.10)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, boxW, boxH);
+
+  // title
+  ctx.fillStyle = "#fff";
+  ctx.font = "bold 28px system-ui";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("Game Over", W / 2, y + 40);
+
+  // score + best line
+  ctx.font = "16px system-ui";
+  const scoreTxt = `Score: ${Game.score}`;
+  const bestTxt = `Best: ${Game.best}`;
+
+  ctx.fillStyle = "rgba(255,255,255,0.92)";
+  ctx.fillText(scoreTxt, W / 2 - 70, y + 88);
+  ctx.fillText(bestTxt,  W / 2 + 70, y + 88);
+
+  // new best badge
+  if (Game.diedNewBest && Game.score > 0) {
+    ctx.fillStyle = "#ffd54a";
+    ctx.font = "bold 14px system-ui";
+    ctx.fillText("NEW BEST!", W / 2, y + 115);
+  }
+
+  // instructions
+  ctx.fillStyle = "rgba(255,255,255,0.85)";
+  ctx.font = "14px system-ui";
+  ctx.fillText("Tap to restart", W / 2, y + 148);
+  ctx.fillText("or press R / Restart button", W / 2, y + 170);
+
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
 }
 
 function draw() {
@@ -205,11 +291,10 @@ function draw() {
   // level-up overlay
   if (Game.overlayT > 0) {
     const t = Game.overlayT;
-    const alpha = Math.min(1, t / 0.15); // fades at the end
+    const alpha = Math.min(1, t / 0.15);
     ctx.save();
     ctx.globalAlpha = alpha;
 
-    // small banner behind text
     ctx.fillStyle = "rgba(0,0,0,0.35)";
     ctx.fillRect(0, 70, W, 46);
 
@@ -220,17 +305,13 @@ function draw() {
     ctx.fillText(Game.overlayText, W / 2, 93);
 
     ctx.restore();
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
   }
 
-  // game over overlay
+  // game over popup
   if (!Game.running) {
-    ctx.fillStyle = "rgba(0,0,0,0.55)";
-    ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = "#fff";
-    ctx.font = "bold 30px system-ui";
-    ctx.fillText("Game Over", 120, 320);
-    ctx.font = "16px system-ui";
-    ctx.fillText("Tap to restart • or press R", 105, 355);
+    drawPopupMenu();
   }
 }
 
