@@ -48,8 +48,8 @@ const Game = {
 
   // game over popup state
   justDied: false,
-  diedBestBefore: 0,   // best at the moment you died
-  diedNewBest: false  // whether this run set a new best
+  diedBestBefore: 0,
+  diedNewBest: false
 };
 
 const Lanes = 3;
@@ -103,17 +103,25 @@ function spawnObstacle() {
   Obstacles.push({ lane, y: -30, r: 18 });
 }
 
+// NEW: "40% overlap" collision rule
+// Death only triggers when the obstacle overlaps the player meaningfully,
+// not when it barely grazes the edge.
+//
+// Equivalent to requiring >= 40% of obstacle radius penetrates into player circle:
+// distance <= Player.r + 0.60 * obs.r
 function hitTest(obs) {
   const px = laneX(Player.lane), py = Player.y;
   const ox = laneX(obs.lane), oy = obs.y;
-  return Math.hypot(px - ox, py - oy) < Player.r + obs.r;
+
+  const d = Math.hypot(px - ox, py - oy);
+  const hitDistance = Player.r + obs.r * 0.60;
+
+  return d < hitDistance;
 }
 
 function die() {
-  // snapshot what happened for the popup
   const bestBefore = Game.best;
 
-  // first-time run: if best is 0, this establishes it
   let newBest = bestBefore;
   let isNew = false;
 
@@ -121,9 +129,7 @@ function die() {
     newBest = Game.score;
     isNew = true;
   } else if (bestBefore === 0 && Game.score >= 0) {
-    // if they've never played before, after first death store a best
     newBest = Math.max(bestBefore, Game.score);
-    // treat this as establishing a best if score > 0
     isNew = (Game.score > 0);
   }
 
@@ -182,48 +188,38 @@ function update(dt) {
 }
 
 function drawPopupMenu() {
-  // centered popup
   const boxW = 290;
   const boxH = 190;
   const x = (W - boxW) / 2;
   const y = (H - boxH) / 2;
 
-  // panel
   ctx.fillStyle = "rgba(0,0,0,0.65)";
   ctx.fillRect(0, 0, W, H);
 
   ctx.fillStyle = "rgba(20,20,30,0.92)";
   ctx.fillRect(x, y, boxW, boxH);
 
-  // border
   ctx.strokeStyle = "rgba(255,255,255,0.10)";
   ctx.lineWidth = 2;
   ctx.strokeRect(x, y, boxW, boxH);
 
-  // title
   ctx.fillStyle = "#fff";
   ctx.font = "bold 28px system-ui";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText("Game Over", W / 2, y + 40);
 
-  // score + best line
   ctx.font = "16px system-ui";
-  const scoreTxt = `Score: ${Game.score}`;
-  const bestTxt = `Best: ${Game.best}`;
-
   ctx.fillStyle = "rgba(255,255,255,0.92)";
-  ctx.fillText(scoreTxt, W / 2 - 70, y + 88);
-  ctx.fillText(bestTxt,  W / 2 + 70, y + 88);
+  ctx.fillText(`Score: ${Game.score}`, W / 2 - 70, y + 88);
+  ctx.fillText(`Best: ${Game.best}`,  W / 2 + 70, y + 88);
 
-  // new best badge
   if (Game.diedNewBest && Game.score > 0) {
     ctx.fillStyle = "#ffd54a";
     ctx.font = "bold 14px system-ui";
     ctx.fillText("NEW BEST!", W / 2, y + 115);
   }
 
-  // instructions
   ctx.fillStyle = "rgba(255,255,255,0.85)";
   ctx.font = "14px system-ui";
   ctx.fillText("Tap to restart", W / 2, y + 148);
@@ -243,7 +239,7 @@ function draw() {
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, W, H);
 
-  // boost flash effect (subtle)
+  // boost flash effect
   if (Game.boostT > 0) {
     const a = Math.min(1, Game.boostT / 0.35);
     ctx.fillStyle = `rgba(255, 215, 0, ${0.10 * a})`;
