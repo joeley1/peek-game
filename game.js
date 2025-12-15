@@ -1,222 +1,175 @@
-const canvas = document.getElementById("game");
-const ctx = canvas.getContext("2d");
-const statsEl = document.getElementById("stats");
+const c = document.getElementById("c");
+const ctx = c.getContext("2d");
 const restartBtn = document.getElementById("restart");
 
-const W = canvas.width;
-const H = canvas.height;
+const W = c.width, H = c.height;
 
-// ---------- UTIL ----------
-const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
-const dist = (ax,ay,bx,by)=>Math.hypot(ax-bx,ay-by);
-
-// ---------- INPUT ----------
-const Keys = new Set();
-const Mouse = { x: W/2, y: H/2 };
-
-window.addEventListener("keydown", e=>{
-  Keys.add(e.key.toLowerCase());
-  if(e.key.toLowerCase()==="r") reset();
-});
-window.addEventListener("keyup", e=>Keys.delete(e.key.toLowerCase()));
-
-canvas.addEventListener("mousemove", e=>{
-  const r = canvas.getBoundingClientRect();
-  Mouse.x = (e.clientX - r.left) * (W / r.width);
-  Mouse.y = (e.clientY - r.top) * (H / r.height);
-});
-
-canvas.addEventListener("mousedown", e=>{
-  if(e.button===0) shoot();
-});
-
-restartBtn.onclick = reset;
-
-// ---------- GAME ----------
 const Game = {
-  running:true,
-  score:0
+  running: true,
+  score: 0,
+  best: Number(localStorage.getItem("odBest") || 0),
+  speed: 220,          // obstacle fall speed
+  spawnEvery: 0.65,    // seconds
+  spawnTimer: 0
 };
 
-// ---------- PLAYER ----------
+const Lanes = 3;
+const laneX = (lane) => (W * (lane + 0.5)) / Lanes;
+
 const Player = {
-  x:W/2, y:H/2,
-  r:16,
-  speed:260,
-  hp:3,
-  angle:0
+  lane: 1,
+  y: H - 90,
+  r: 18
 };
 
-// ---------- ENTITIES ----------
-let Enemies = [];
-let Arrows = [];
+let Obstacles = [];
 
-function spawnEnemy(){
-  const edge = Math.floor(Math.random()*4);
-  let x,y;
-  if(edge===0){ x=-20; y=Math.random()*H; }
-  if(edge===1){ x=W+20; y=Math.random()*H; }
-  if(edge===2){ x=Math.random()*W; y=-20; }
-  if(edge===3){ x=Math.random()*W; y=H+20; }
+function reset() {
+  Game.running = true;
+  Game.score = 0;
+  Game.speed = 220;
+  Game.spawnEvery = 0.65;
+  Game.spawnTimer = 0;
+  Player.lane = 1;
+  Obstacles = [];
+}
 
-  Enemies.push({
-    x,y,
-    r:15,
-    speed:80+Math.random()*40
+function switchLane() {
+  if (!Game.running) return;
+  Player.lane = (Player.lane + 1) % Lanes; // cycles 0->1->2->0
+}
+
+function spawnObstacle() {
+  const lane = Math.floor(Math.random() * Lanes);
+  Obstacles.push({
+    lane,
+    y: -30,
+    r: 18
   });
 }
 
-// ---------- SHOOT ----------
-function shoot(){
-  if(!Game.running) return;
-
-  const a = Player.angle;
-  Arrows.push({
-    x:Player.x + Math.cos(a)*18,
-    y:Player.y + Math.sin(a)*18,
-    vx:Math.cos(a)*520,
-    vy:Math.sin(a)*520,
-    life:1.2
-  });
+function hitTest(obs) {
+  const px = laneX(Player.lane), py = Player.y;
+  const ox = laneX(obs.lane), oy = obs.y;
+  const dx = px - ox, dy = py - oy;
+  const d = Math.hypot(dx, dy);
+  return d < Player.r + obs.r;
 }
 
-// ---------- RESET ----------
-function reset(){
-  Game.running=true;
-  Game.score=0;
-  Player.hp=3;
-  Player.x=W/2;
-  Player.y=H/2;
-  Enemies=[];
-  Arrows=[];
-}
+function update(dt) {
+  if (!Game.running) return;
 
-// ---------- UPDATE ----------
-let spawnTimer=0;
+  // difficulty ramp
+  Game.speed += dt * 8;              // slowly increases
+  Game.spawnEvery = Math.max(0.32, 0.65 - Game.score * 0.002); // faster spawns
 
-function update(dt){
-  Player.angle = Math.atan2(Mouse.y-Player.y, Mouse.x-Player.x);
-
-  if(!Game.running) return;
-
-  // movement
-  let mx=0,my=0;
-  if(Keys.has("w")||Keys.has("arrowup")) my--;
-  if(Keys.has("s")||Keys.has("arrowdown")) my++;
-  if(Keys.has("a")||Keys.has("arrowleft")) mx--;
-  if(Keys.has("d")||Keys.has("arrowright")) mx++;
-
-  if(mx||my){
-    const l=Math.hypot(mx,my);
-    Player.x+=mx/l*Player.speed*dt;
-    Player.y+=my/l*Player.speed*dt;
+  // spawning
+  Game.spawnTimer += dt;
+  if (Game.spawnTimer >= Game.spawnEvery) {
+    spawnObstacle();
+    Game.spawnTimer = 0;
   }
 
-  Player.x=clamp(Player.x,Player.r,W-Player.r);
-  Player.y=clamp(Player.y,Player.r,H-Player.r);
-
-  // enemies
-  spawnTimer+=dt;
-  if(spawnTimer>1){
-    spawnEnemy();
-    spawnTimer=0;
-  }
-
-  Enemies.forEach(e=>{
-    const dx=Player.x-e.x, dy=Player.y-e.y;
-    const d=Math.hypot(dx,dy)||1;
-    e.x+=dx/d*e.speed*dt;
-    e.y+=dy/d*e.speed*dt;
-
-    if(d<Player.r+e.r){
-      Player.hp--;
-      Game.running = Player.hp>0;
-    }
-  });
-
-  // arrows
-  Arrows.forEach(a=>{
-    a.x+=a.vx*dt;
-    a.y+=a.vy*dt;
-    a.life-=dt;
-  });
-  Arrows=Arrows.filter(a=>a.life>0);
-
-  // arrow hits
-  for(const a of Arrows){
-    for(const e of Enemies){
-      if(dist(a.x,a.y,e.x,e.y)<e.r){
-        e.dead=true;
-        a.life=0;
-        Game.score++;
-      }
+  // move obstacles
+  for (const o of Obstacles) {
+    o.y += Game.speed * dt;
+    if (hitTest(o)) {
+      Game.running = false;
+      Game.best = Math.max(Game.best, Game.score);
+      localStorage.setItem("odBest", String(Game.best));
     }
   }
-  Enemies=Enemies.filter(e=>!e.dead);
 
-  statsEl.textContent = `Score: ${Game.score} • HP: ${Player.hp}`;
+  // score: +1 per obstacle successfully passed
+  const before = Obstacles.length;
+  Obstacles = Obstacles.filter(o => o.y < H + 40);
+  const removed = before - Obstacles.length;
+  if (removed > 0) Game.score += removed;
 }
 
-// ---------- DRAW ----------
-function draw(){
-  ctx.clearRect(0,0,W,H);
+function draw() {
+  ctx.clearRect(0, 0, W, H);
 
-  // floor
-  ctx.fillStyle="#151515";
+  // background
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0, "#0b1220");
+  g.addColorStop(1, "#071018");
+  ctx.fillStyle = g;
   ctx.fillRect(0,0,W,H);
 
-  // player
-  ctx.save();
-  ctx.translate(Player.x,Player.y);
-  ctx.rotate(Player.angle);
-  ctx.fillStyle="#5a3d2b";
-  ctx.beginPath();
-  ctx.arc(0,0,Player.r,0,Math.PI*2);
-  ctx.fill();
-  ctx.strokeStyle="#c8b48a";
-  ctx.lineWidth=4;
-  ctx.beginPath();
-  ctx.moveTo(8,0);
-  ctx.lineTo(24,0);
-  ctx.stroke();
-  ctx.restore();
-
-  // arrows
-  ctx.strokeStyle="#f1c40f";
-  ctx.lineWidth=2;
-  Arrows.forEach(a=>{
+  // lane dividers
+  ctx.globalAlpha = 0.18;
+  ctx.strokeStyle = "#fff";
+  ctx.lineWidth = 2;
+  for (let i = 1; i < Lanes; i++) {
+    const x = (W * i) / Lanes;
     ctx.beginPath();
-    ctx.moveTo(a.x,a.y);
-    ctx.lineTo(a.x-a.vx*0.03,a.y-a.vy*0.03);
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, H);
     ctx.stroke();
-  });
+  }
+  ctx.globalAlpha = 1;
 
-  // enemies
-  ctx.fillStyle="#b71c1c";
-  Enemies.forEach(e=>{
+  // HUD
+  ctx.fillStyle = "rgba(255,255,255,0.08)";
+  ctx.fillRect(0, 0, W, 60);
+  ctx.fillStyle = "#fff";
+  ctx.font = "bold 18px system-ui";
+  ctx.fillText("Obstacle Dodge", 14, 38);
+  ctx.font = "14px system-ui";
+  ctx.fillText(`Score: ${Game.score}   Best: ${Game.best}`, W - 190, 38);
+
+  // player
+  const px = laneX(Player.lane);
+  ctx.fillStyle = "#f1c40f";
+  ctx.beginPath();
+  ctx.arc(px, Player.y, Player.r, 0, Math.PI * 2);
+  ctx.fill();
+
+  // obstacles
+  ctx.fillStyle = "#e74c3c";
+  for (const o of Obstacles) {
+    const ox = laneX(o.lane);
     ctx.beginPath();
-    ctx.arc(e.x,e.y,e.r,0,Math.PI*2);
+    ctx.arc(ox, o.y, o.r, 0, Math.PI * 2);
     ctx.fill();
-  });
+  }
 
-  // game over
-  if(!Game.running){
-    ctx.fillStyle="rgba(0,0,0,.6)";
+  // game over overlay
+  if (!Game.running) {
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
     ctx.fillRect(0,0,W,H);
-    ctx.fillStyle="#fff";
-    ctx.font="32px system-ui";
-    ctx.fillText("YOU DIED",W/2-90,H/2);
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 30px system-ui";
+    ctx.fillText("Game Over", 120, 320);
+    ctx.font = "16px system-ui";
+    ctx.fillText("Press R or tap Restart", 120, 355);
   }
 }
 
-// ---------- LOOP ----------
-let last=performance.now();
-function loop(now){
-  const dt=(now-last)/1000;
-  last=now;
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
   update(dt);
   draw();
   requestAnimationFrame(loop);
 }
-reset();
 requestAnimationFrame(loop);
+
+// Controls: Space/tap to switch lane, R to restart
+window.addEventListener("keydown", (e) => {
+  const k = e.key.toLowerCase();
+  if (k === " " || e.code === "Space") { e.preventDefault(); switchLane(); }
+  if (k === "r") reset();
+});
+
+c.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  if (!Game.running) return;
+  switchLane();
+}, { passive: false });
+
+restartBtn.addEventListener("click", reset);
+
+reset();
