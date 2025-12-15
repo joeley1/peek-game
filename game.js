@@ -166,7 +166,14 @@ window.addEventListener("keydown", (e) => {
 
 c.addEventListener("pointerdown", (e) => {
   e.preventDefault();
-  if (!Game.running) return;
+
+  // NEW: if you're dead, one tap restarts
+  if (!Game.running) {
+    reset();
+    return;
+  }
+
+  // otherwise, normal gameplay tap switches lane
   switchLane();
 }, { passive: false });
 
