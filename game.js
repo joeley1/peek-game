@@ -4,19 +4,47 @@ const restartBtn = document.getElementById("restart");
 
 const W = c.width, H = c.height;
 
+// --- tiny sound (no files) ---
+let audioCtx = null;
+function beepClick() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const t = audioCtx.currentTime;
+
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+
+    o.type = "square";
+    o.frequency.setValueAtTime(780, t);
+    o.frequency.exponentialRampToValueAtTime(520, t + 0.035);
+
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.12, t + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+
+    o.connect(g);
+    g.connect(audioCtx.destination);
+    o.start(t);
+    o.stop(t + 0.055);
+  } catch (_) {}
+}
+
 const Game = {
   running: true,
   score: 0,
   best: Number(localStorage.getItem("odBest") || 0),
 
-  // base difficulty
-  baseSpeed: 220,      // starting obstacle fall speed
-  speed: 220,          // current speed (will scale)
-  spawnEvery: 0.65,    // seconds
+  baseSpeed: 220,
+  speed: 220,
+  spawnEvery: 0.65,
   spawnTimer: 0,
 
-  // NEW: speed scaling every 10 points
-  speedLevel: 0        // 0 at score 0..9, 1 at 10..19, etc.
+  speedLevel: 0,
+
+  // NEW: overlay + boost effects
+  overlayText: "",
+  overlayT: 0,     // seconds remaining
+  boostT: 0        // 0..1 intensity timer
 };
 
 const Lanes = 3;
@@ -41,33 +69,42 @@ function reset() {
 
   Game.speedLevel = 0;
 
+  Game.overlayText = "";
+  Game.overlayT = 0;
+  Game.boostT = 0;
+
   Player.lane = 1;
   Obstacles = [];
 }
 
+function showLevelUpOverlay() {
+  Game.overlayText = "+20% SPEED!";
+  Game.overlayT = 0.85;   // show for ~0.85s
+  Game.boostT = 0.35;     // flash/boost for ~0.35s
+}
+
 function switchLane() {
   if (!Game.running) return;
-  Player.lane = (Player.lane + 1) % Lanes; // cycles 0->1->2->0
+  Player.lane = (Player.lane + 1) % Lanes;
+  beepClick();
 }
 
 function spawnObstacle() {
   const lane = Math.floor(Math.random() * Lanes);
-  Obstacles.push({
-    lane,
-    y: -30,
-    r: 18
-  });
+  Obstacles.push({ lane, y: -30, r: 18 });
 }
 
 function hitTest(obs) {
   const px = laneX(Player.lane), py = Player.y;
   const ox = laneX(obs.lane), oy = obs.y;
-  const dx = px - ox, dy = py - oy;
-  const d = Math.hypot(dx, dy);
-  return d < Player.r + obs.r;
+  return Math.hypot(px - ox, py - oy) < Player.r + obs.r;
 }
 
 function update(dt) {
+  // timers for overlays even when dead
+  if (Game.overlayT > 0) Game.overlayT = Math.max(0, Game.overlayT - dt);
+  if (Game.boostT > 0) Game.boostT = Math.max(0, Game.boostT - dt);
+
   if (!Game.running) return;
 
   // spawning timing (unchanged)
@@ -99,13 +136,13 @@ function update(dt) {
   if (removed > 0) {
     Game.score += removed;
 
-    // NEW: every time score crosses 10, 20, 30... increase speed by 5%
+    // every 10 points -> +20% speed
     const newLevel = Math.floor(Game.score / 10);
     if (newLevel !== Game.speedLevel) {
       Game.speedLevel = newLevel;
+      Game.speed = Game.baseSpeed * Math.pow(1.20, Game.speedLevel);
 
-      // 5% increase per level: baseSpeed * (1.05 ^ level)
-      Game.speed = Game.baseSpeed * Math.pow(1.05, Game.speedLevel);
+      showLevelUpOverlay();
     }
   }
 }
@@ -119,6 +156,13 @@ function draw() {
   g.addColorStop(1, "#071018");
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, W, H);
+
+  // boost flash effect (subtle)
+  if (Game.boostT > 0) {
+    const a = Math.min(1, Game.boostT / 0.35);
+    ctx.fillStyle = `rgba(255, 215, 0, ${0.10 * a})`;
+    ctx.fillRect(0, 0, W, H);
+  }
 
   // lane dividers
   ctx.globalAlpha = 0.18;
@@ -158,6 +202,26 @@ function draw() {
     ctx.fill();
   }
 
+  // level-up overlay
+  if (Game.overlayT > 0) {
+    const t = Game.overlayT;
+    const alpha = Math.min(1, t / 0.15); // fades at the end
+    ctx.save();
+    ctx.globalAlpha = alpha;
+
+    // small banner behind text
+    ctx.fillStyle = "rgba(0,0,0,0.35)";
+    ctx.fillRect(0, 70, W, 46);
+
+    ctx.fillStyle = "#ffd54a";
+    ctx.font = "bold 18px system-ui";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(Game.overlayText, W / 2, 93);
+
+    ctx.restore();
+  }
+
   // game over overlay
   if (!Game.running) {
     ctx.fillStyle = "rgba(0,0,0,0.55)";
@@ -190,14 +254,9 @@ window.addEventListener("keydown", (e) => {
 // Mobile-friendly tap handling
 function handleTap(e) {
   e.preventDefault();
-
-  if (!Game.running) {
-    reset();
-    return;
-  }
+  if (!Game.running) { reset(); return; }
   switchLane();
 }
-
 c.addEventListener("touchstart", handleTap, { passive: false });
 c.addEventListener("click", handleTap, { passive: false });
 
