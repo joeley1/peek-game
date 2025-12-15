@@ -8,9 +8,15 @@ const Game = {
   running: true,
   score: 0,
   best: Number(localStorage.getItem("odBest") || 0),
-  speed: 220,          // obstacle fall speed
+
+  // base difficulty
+  baseSpeed: 220,      // starting obstacle fall speed
+  speed: 220,          // current speed (will scale)
   spawnEvery: 0.65,    // seconds
-  spawnTimer: 0
+  spawnTimer: 0,
+
+  // NEW: speed scaling every 10 points
+  speedLevel: 0        // 0 at score 0..9, 1 at 10..19, etc.
 };
 
 const Lanes = 3;
@@ -27,9 +33,14 @@ let Obstacles = [];
 function reset() {
   Game.running = true;
   Game.score = 0;
-  Game.speed = 220;
+
+  Game.baseSpeed = 220;
+  Game.speed = Game.baseSpeed;
   Game.spawnEvery = 0.65;
   Game.spawnTimer = 0;
+
+  Game.speedLevel = 0;
+
   Player.lane = 1;
   Obstacles = [];
 }
@@ -59,9 +70,8 @@ function hitTest(obs) {
 function update(dt) {
   if (!Game.running) return;
 
-  // difficulty ramp
-  Game.speed += dt * 8; // slowly increases
-  Game.spawnEvery = Math.max(0.32, 0.65 - Game.score * 0.002); // faster spawns
+  // spawning timing (unchanged)
+  Game.spawnEvery = Math.max(0.32, 0.65 - Game.score * 0.002);
 
   // spawning
   Game.spawnTimer += dt;
@@ -85,7 +95,19 @@ function update(dt) {
   const before = Obstacles.length;
   Obstacles = Obstacles.filter(o => o.y < H + 40);
   const removed = before - Obstacles.length;
-  if (removed > 0) Game.score += removed;
+
+  if (removed > 0) {
+    Game.score += removed;
+
+    // NEW: every time score crosses 10, 20, 30... increase speed by 5%
+    const newLevel = Math.floor(Game.score / 10);
+    if (newLevel !== Game.speedLevel) {
+      Game.speedLevel = newLevel;
+
+      // 5% increase per level: baseSpeed * (1.05 ^ level)
+      Game.speed = Game.baseSpeed * Math.pow(1.05, Game.speedLevel);
+    }
+  }
 }
 
 function draw() {
@@ -165,9 +187,7 @@ window.addEventListener("keydown", (e) => {
   if (k === "r") reset();
 });
 
-// -------- Mobile-friendly tap handling --------
-// If alive: tap = switch lane
-// If dead: tap = restart
+// Mobile-friendly tap handling
 function handleTap(e) {
   e.preventDefault();
 
@@ -178,12 +198,9 @@ function handleTap(e) {
   switchLane();
 }
 
-// Use BOTH for iOS reliability
 c.addEventListener("touchstart", handleTap, { passive: false });
 c.addEventListener("click", handleTap, { passive: false });
 
-// Button restart
 restartBtn.addEventListener("click", reset);
 
-// Start
 reset();
