@@ -60,7 +60,7 @@ function update(dt) {
   if (!Game.running) return;
 
   // difficulty ramp
-  Game.speed += dt * 8;              // slowly increases
+  Game.speed += dt * 8; // slowly increases
   Game.spawnEvery = Math.max(0.32, 0.65 - Game.score * 0.002); // faster spawns
 
   // spawning
@@ -70,9 +70,10 @@ function update(dt) {
     Game.spawnTimer = 0;
   }
 
-  // move obstacles
+  // move obstacles + collision
   for (const o of Obstacles) {
     o.y += Game.speed * dt;
+
     if (hitTest(o)) {
       Game.running = false;
       Game.best = Math.max(Game.best, Game.score);
@@ -91,11 +92,11 @@ function draw() {
   ctx.clearRect(0, 0, W, H);
 
   // background
-  const g = ctx.createLinearGradient(0,0,0,H);
+  const g = ctx.createLinearGradient(0, 0, 0, H);
   g.addColorStop(0, "#0b1220");
   g.addColorStop(1, "#071018");
   ctx.fillStyle = g;
-  ctx.fillRect(0,0,W,H);
+  ctx.fillRect(0, 0, W, H);
 
   // lane dividers
   ctx.globalAlpha = 0.18;
@@ -138,12 +139,12 @@ function draw() {
   // game over overlay
   if (!Game.running) {
     ctx.fillStyle = "rgba(0,0,0,0.55)";
-    ctx.fillRect(0,0,W,H);
+    ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = "#fff";
     ctx.font = "bold 30px system-ui";
     ctx.fillText("Game Over", 120, 320);
     ctx.font = "16px system-ui";
-    ctx.fillText("Press R or tap Restart", 120, 355);
+    ctx.fillText("Tap to restart • or press R", 105, 355);
   }
 }
 
@@ -157,26 +158,32 @@ function loop(now) {
 }
 requestAnimationFrame(loop);
 
-// Controls: Space/tap to switch lane, R to restart
+// Keyboard controls
 window.addEventListener("keydown", (e) => {
   const k = e.key.toLowerCase();
-  if (k === " " || e.code === "Space") { e.preventDefault(); switchLane(); }
+  if (e.code === "Space" || k === " ") { e.preventDefault(); switchLane(); }
   if (k === "r") reset();
 });
 
-c.addEventListener("pointerdown", (e) => {
+// -------- Mobile-friendly tap handling --------
+// If alive: tap = switch lane
+// If dead: tap = restart
+function handleTap(e) {
   e.preventDefault();
 
-  // NEW: if you're dead, one tap restarts
   if (!Game.running) {
     reset();
     return;
   }
-
-  // otherwise, normal gameplay tap switches lane
   switchLane();
-}, { passive: false });
+}
 
+// Use BOTH for iOS reliability
+c.addEventListener("touchstart", handleTap, { passive: false });
+c.addEventListener("click", handleTap, { passive: false });
+
+// Button restart
 restartBtn.addEventListener("click", reset);
 
+// Start
 reset();
