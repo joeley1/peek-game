@@ -3,29 +3,48 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>One Screen Dungeon — Ranged</title>
+  <title>Dungeon Archer</title>
   <style>
     body{
-      margin:0; height:100vh; display:grid; place-items:center;
-      background:#0e0e0e; color:#eee; font-family:system-ui;
+      margin:0;
+      height:100vh;
+      display:grid;
+      place-items:center;
+      background:#0e0e0e;
+      color:#eee;
+      font-family:system-ui;
     }
     .wrap{ position:relative; }
     canvas{
-      background:#141414; border-radius:12px; touch-action:none;
+      background:#141414;
+      border-radius:12px;
       display:block;
     }
     .hud{
-      position:absolute; left:10px; top:10px; display:flex; gap:8px; align-items:center;
-      background: rgba(0,0,0,0.35); padding:8px 10px; border-radius:10px;
-      backdrop-filter: blur(4px);
+      position:absolute;
+      top:10px; left:10px;
+      background:rgba(0,0,0,.45);
+      padding:8px 12px;
+      border-radius:10px;
+      font-size:14px;
     }
-    .hud .txt{ font-size:14px; }
     button{
-      border:0; border-radius:10px; padding:8px 10px;
-      background:#2b2b2b; color:#fff; font-weight:600;
+      margin-top:6px;
+      width:100%;
+      border:0;
+      padding:6px;
+      border-radius:8px;
+      background:#2b2b2b;
+      color:#fff;
+      cursor:pointer;
     }
-    button:active{ transform: translateY(1px); }
-    .hint{ position:absolute; right:10px; top:10px; font-size:12px; opacity:.85; text-align:right; }
+    .hint{
+      position:absolute;
+      right:10px; top:10px;
+      font-size:12px;
+      opacity:.85;
+      text-align:right;
+    }
   </style>
 </head>
 <body>
@@ -33,14 +52,14 @@
     <canvas id="game" width="900" height="540"></canvas>
 
     <div class="hud">
-      <div class="txt" id="stats">Score: 0 • Best: 0 • HP: 3</div>
-      <button id="restartBtn">Restart</button>
+      <div id="stats">Score: 0 • HP: 3</div>
+      <button id="restart">Restart</button>
     </div>
 
     <div class="hint">
       Move: WASD / Arrows<br>
       Aim: Mouse<br>
-      Shoot: Left click (hold)<br>
+      Shoot: Left Click<br>
       Restart: R
     </div>
   </div>
