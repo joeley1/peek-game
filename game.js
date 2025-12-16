@@ -66,35 +66,39 @@ function spawnObstacle() {
    UPDATE
 ========================= */
 function update(dt) {
-  if (!Game.running) return;
+  const alive = Game.running;
 
-  spawnT -= dt * Game.speed;
-  if (spawnT <= 0) {
-    spawnObstacle();
-    spawnT = 0.9;
+  /* ---- Gameplay only when alive ---- */
+  if (alive) {
+    spawnT -= dt * Game.speed;
+    if (spawnT <= 0) {
+      spawnObstacle();
+      spawnT = 0.9;
+    }
   }
 
-  // Smooth lane movement
+  // Smooth lane movement (always allowed)
   Player.x += (Player.targetX - Player.x) * (1 - Math.exp(-18 * dt));
 
   obstacles.forEach(o => {
-    o.y += 260 * dt * Game.speed;
+    if (alive) o.y += 260 * dt * Game.speed;
 
     const px = Player.x;
-    const d = Math.hypot(px - laneX(o.lane), Player.y - o.y);
+    const ox = laneX(o.lane);
+    const d = Math.hypot(px - ox, Player.y - o.y);
 
     const hitD = Player.r + o.r * 0.6; // 40% forgiveness
     const margin = 20;
 
-    // Collision
-    if (d < hitD && Game.running) {
+    // ---- Death ----
+    if (alive && d < hitD) {
       Game.running = false;
-      Game.shakeT = 0.3;
-      Game.shakeMag = 6;
+      Game.shakeT = 0.28;
+      Game.shakeMag = 7;
     }
 
-    // Close Call detection (only once per obstacle)
-    if (!o.checked && o.y > Player.y) {
+    // ---- Close Call ----
+    if (alive && !o.checked && o.y > Player.y) {
       o.checked = true;
 
       if (o.lane === Player.lane && d > hitD && d <= hitD + margin) {
@@ -113,16 +117,15 @@ function update(dt) {
       }
     }
 
-    // Scoring
-    if (!o.scored && o.y > Player.y + 40) {
+    // ---- Scoring ----
+    if (alive && !o.scored && o.y > Player.y + 40) {
       o.scored = true;
       Game.score++;
 
-      // Speed increase every 10 points → +10%
       const lvl = Math.floor(Game.score / 10);
       if (lvl > Game.speedLevel) {
         Game.speedLevel = lvl;
-        Game.speed *= 1.10;
+        Game.speed *= 1.10; // ✅ 10% increase
         Game.boostT = 0.3;
         Game.speedMsgT = 0.8;
       }
@@ -139,6 +142,7 @@ function update(dt) {
     obstacles.shift();
   }
 
+  /* ---- Effects update ALWAYS ---- */
   if (Game.flashT > 0) Game.flashT -= dt;
   if (Game.boostT > 0) Game.boostT -= dt;
   if (Game.speedMsgT > 0) Game.speedMsgT -= dt;
@@ -190,7 +194,6 @@ function draw() {
   ctx.font = "16px system-ui";
   ctx.fillText(`Score: ${Game.score}`, 16, 30);
   ctx.fillText(`Best: ${Game.best}`, W - 90, 30);
-
   ctx.fillText(`Close Calls: ${Game.closeMeter}`, 16, 55);
 
   if (Game.speedMsgT > 0) {
@@ -203,7 +206,7 @@ function draw() {
     ctx.globalAlpha = 1;
   }
 
-  // Death screen
+  // Death overlay
   if (!Game.running) {
     ctx.fillStyle = "rgba(0,0,0,0.55)";
     ctx.fillRect(0, 0, W, H);
@@ -218,7 +221,6 @@ function draw() {
     ctx.fillText(`Best: ${Game.best}`, W / 2, H * 0.47);
     ctx.fillText(`Close Calls: ${Game.sessionCloseCalls}`, W / 2, H * 0.52);
     ctx.fillText(`Max Streak: ${Game.sessionMaxCombo}`, W / 2, H * 0.57);
-
     ctx.fillText("Tap or Press R to Restart", W / 2, H * 0.65);
     ctx.textAlign = "left";
   }
