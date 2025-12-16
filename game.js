@@ -4,31 +4,25 @@ const restartBtn = document.getElementById("restart");
 
 const W = c.width, H = c.height;
 
-// --- tiny sound (no files) ---
+// ---------------- SOUND ----------------
 let audioCtx = null;
-function beepClick() {
+function beep(freq = 700, dur = 0.05) {
   try {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     const t = audioCtx.currentTime;
-
     const o = audioCtx.createOscillator();
     const g = audioCtx.createGain();
-
     o.type = "square";
-    o.frequency.setValueAtTime(780, t);
-    o.frequency.exponentialRampToValueAtTime(520, t + 0.035);
-
+    o.frequency.setValueAtTime(freq, t);
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.12, t + 0.005);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
-
-    o.connect(g);
-    g.connect(audioCtx.destination);
-    o.start(t);
-    o.stop(t + 0.055);
-  } catch (_) {}
+    g.gain.exponentialRampToValueAtTime(0.12, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(t); o.stop(t + dur);
+  } catch {}
 }
 
+// ---------------- GAME STATE ----------------
 const Game = {
   running: true,
   score: 0,
@@ -36,23 +30,20 @@ const Game = {
 
   baseSpeed: 220,
   speed: 220,
+  speedLevel: 0,
+
   spawnEvery: 0.65,
   spawnTimer: 0,
 
-  speedLevel: 0,
+  combo: 0,
 
-  // overlay + boost effects
   overlayText: "",
   overlayT: 0,
-  boostT: 0,
-
-  // game over popup state
-  diedBestBefore: 0,
-  diedNewBest: false
+  boostT: 0
 };
 
 const Lanes = 3;
-const laneX = (lane) => (W * (lane + 0.5)) / Lanes;
+const laneX = l => (W * (l + 0.5)) / Lanes;
 
 const Player = {
   lane: 1,
@@ -62,76 +53,53 @@ const Player = {
 
 let Obstacles = [];
 
+// ---------------- RESET ----------------
 function reset() {
   Game.running = true;
   Game.score = 0;
-
-  Game.baseSpeed = 220;
-  Game.speed = Game.baseSpeed;
-  Game.spawnEvery = 0.65;
-  Game.spawnTimer = 0;
+  Game.combo = 0;
 
   Game.speedLevel = 0;
+  Game.speed = Game.baseSpeed;
+
+  Game.spawnEvery = 0.65;
+  Game.spawnTimer = 0;
 
   Game.overlayText = "";
   Game.overlayT = 0;
   Game.boostT = 0;
 
-  Game.diedBestBefore = 0;
-  Game.diedNewBest = false;
-
   Player.lane = 1;
   Obstacles = [];
 }
 
-function showLevelUpOverlay() {
-  Game.overlayText = "+10% SPEED!";
-  Game.overlayT = 0.85;
-  Game.boostT = 0.35;
-}
-
+// ---------------- GAMEPLAY ----------------
 function switchLane() {
   if (!Game.running) return;
   Player.lane = (Player.lane + 1) % Lanes;
-  beepClick();
+  beep(650);
 }
 
 function spawnObstacle() {
-  const lane = Math.floor(Math.random() * Lanes);
-  Obstacles.push({ lane, y: -30, r: 18 });
+  Obstacles.push({
+    lane: Math.floor(Math.random() * Lanes),
+    y: -30,
+    r: 18,
+    scored: false
+  });
 }
 
-// 40% overlap collision rule
-function hitTest(obs) {
-  const px = laneX(Player.lane), py = Player.y;
-  const ox = laneX(obs.lane), oy = obs.y;
-  const d = Math.hypot(px - ox, py - oy);
-  const hitDistance = Player.r + obs.r * 0.60;
-  return d < hitDistance;
+// 40% overlap rule
+function hitDistance(obs) {
+  return Player.r + obs.r * 0.60;
 }
 
-function die() {
-  const bestBefore = Game.best;
-
-  if (Game.score > bestBefore) {
-    Game.best = Game.score;
-    Game.diedNewBest = true;
-  } else {
-    Game.diedNewBest = false;
-  }
-
-  localStorage.setItem("odBest", String(Game.best));
-  Game.running = false;
-}
-
+// ---------------- UPDATE ----------------
 function update(dt) {
-  // overlay timers (run even when dead)
-  if (Game.overlayT > 0) Game.overlayT = Math.max(0, Game.overlayT - dt);
-  if (Game.boostT > 0) Game.boostT = Math.max(0, Game.boostT - dt);
-
+  if (Game.overlayT > 0) Game.overlayT -= dt;
+  if (Game.boostT > 0) Game.boostT -= dt;
   if (!Game.running) return;
 
-  // spawning timing
   Game.spawnEvery = Math.max(0.32, 0.65 - Game.score * 0.002);
 
   Game.spawnTimer += dt;
@@ -142,67 +110,51 @@ function update(dt) {
 
   for (const o of Obstacles) {
     o.y += Game.speed * dt;
-    if (hitTest(o)) {
-      die();
-      break;
+
+    const px = laneX(Player.lane), py = Player.y;
+    const ox = laneX(o.lane), oy = o.y;
+    const d = Math.hypot(px - ox, py - oy);
+
+    // death
+    if (d < hitDistance(o)) {
+      Game.running = false;
+      Game.best = Math.max(Game.best, Game.score);
+      localStorage.setItem("odBest", String(Game.best));
+      Game.combo = 0;
+      return;
+    }
+
+    // PERFECT DODGE CHECK
+    if (!o.scored && o.lane === Player.lane && o.y > Player.y) {
+      const perfectMargin = 8; // pixels
+      if (d <= hitDistance(o) + perfectMargin) {
+        Game.combo++;
+        Game.score += Game.combo; // bonus scales
+        Game.overlayText = `PERFECT x${Game.combo}`;
+        Game.overlayT = 0.6;
+        beep(980);
+      } else {
+        Game.combo = 0;
+        Game.score += 1;
+      }
+      o.scored = true;
+
+      // SPEED SCALING — TRUE 10%
+      const lvl = Math.floor(Game.score / 10);
+      if (lvl !== Game.speedLevel) {
+        Game.speedLevel = lvl;
+        Game.speed = Game.baseSpeed * Math.pow(1.10, Game.speedLevel);
+        Game.overlayText = "+10% SPEED!";
+        Game.overlayT = 0.8;
+        Game.boostT = 0.35;
+      }
     }
   }
 
-  const before = Obstacles.length;
   Obstacles = Obstacles.filter(o => o.y < H + 40);
-  const removed = before - Obstacles.length;
-
-  if (removed > 0) {
-    Game.score += removed;
-
-    // NEW: every 10 points -> +10% speed
-    const newLevel = Math.floor(Game.score / 10);
-    if (newLevel !== Game.speedLevel) {
-      Game.speedLevel = newLevel;
-      Game.speed = Game.baseSpeed * Math.pow(1.10, Game.speedLevel);
-      showLevelUpOverlay();
-    }
-  }
 }
 
-function drawPopupMenu() {
-  const boxW = 290, boxH = 190;
-  const x = (W - boxW) / 2;
-  const y = (H - boxH) / 2;
-
-  ctx.fillStyle = "rgba(0,0,0,0.65)";
-  ctx.fillRect(0, 0, W, H);
-
-  ctx.fillStyle = "rgba(20,20,30,0.92)";
-  ctx.fillRect(x, y, boxW, boxH);
-
-  ctx.strokeStyle = "rgba(255,255,255,0.10)";
-  ctx.lineWidth = 2;
-  ctx.strokeRect(x, y, boxW, boxH);
-
-  ctx.fillStyle = "#fff";
-  ctx.font = "bold 28px system-ui";
-  ctx.textAlign = "center";
-  ctx.fillText("Game Over", W / 2, y + 40);
-
-  ctx.font = "16px system-ui";
-  ctx.fillText(`Score: ${Game.score}`, W / 2 - 70, y + 88);
-  ctx.fillText(`Best: ${Game.best}`, W / 2 + 70, y + 88);
-
-  if (Game.diedNewBest && Game.score > 0) {
-    ctx.fillStyle = "#ffd54a";
-    ctx.font = "bold 14px system-ui";
-    ctx.fillText("NEW BEST!", W / 2, y + 115);
-  }
-
-  ctx.fillStyle = "rgba(255,255,255,0.85)";
-  ctx.font = "14px system-ui";
-  ctx.fillText("Tap to restart", W / 2, y + 148);
-  ctx.fillText("or press R / Restart button", W / 2, y + 170);
-
-  ctx.textAlign = "left";
-}
-
+// ---------------- DRAW ----------------
 function draw() {
   ctx.clearRect(0, 0, W, H);
 
@@ -213,8 +165,7 @@ function draw() {
   ctx.fillRect(0, 0, W, H);
 
   if (Game.boostT > 0) {
-    const a = Game.boostT / 0.35;
-    ctx.fillStyle = `rgba(255,215,0,${0.1 * a})`;
+    ctx.fillStyle = `rgba(255,215,0,${0.1 * (Game.boostT / 0.35)})`;
     ctx.fillRect(0, 0, W, H);
   }
 
@@ -222,10 +173,7 @@ function draw() {
   ctx.strokeStyle = "#fff";
   for (let i = 1; i < Lanes; i++) {
     const x = (W * i) / Lanes;
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, H);
-    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
   }
   ctx.globalAlpha = 1;
 
@@ -241,19 +189,32 @@ function draw() {
     ctx.fill();
   }
 
+  ctx.fillStyle = "#fff";
+  ctx.font = "14px system-ui";
+  ctx.fillText(`Score: ${Game.score}   Best: ${Game.best}   Combo: x${Game.combo}`, 12, 28);
+
   if (Game.overlayT > 0) {
     ctx.fillStyle = "rgba(0,0,0,0.35)";
-    ctx.fillRect(0, 70, W, 46);
+    ctx.fillRect(0, 60, W, 44);
     ctx.fillStyle = "#ffd54a";
     ctx.font = "bold 18px system-ui";
     ctx.textAlign = "center";
-    ctx.fillText(Game.overlayText, W / 2, 98);
+    ctx.fillText(Game.overlayText, W / 2, 88);
     ctx.textAlign = "left";
   }
 
-  if (!Game.running) drawPopupMenu();
+  if (!Game.running) {
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 28px system-ui";
+    ctx.fillText("Game Over", W / 2 - 80, H / 2 - 10);
+    ctx.font = "16px system-ui";
+    ctx.fillText("Tap / R to restart", W / 2 - 70, H / 2 + 20);
+  }
 }
 
+// ---------------- LOOP ----------------
 let last = performance.now();
 function loop(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
@@ -264,7 +225,7 @@ function loop(now) {
 }
 requestAnimationFrame(loop);
 
-// Controls
+// ---------------- CONTROLS ----------------
 window.addEventListener("keydown", e => {
   if (e.code === "Space") { e.preventDefault(); switchLane(); }
   if (e.key.toLowerCase() === "r") reset();
