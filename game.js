@@ -4,22 +4,52 @@ const restartBtn = document.getElementById("restart");
 
 const W = c.width, H = c.height;
 
-// ---------------- SOUND ----------------
+// ---------------- SOUND (no files) ----------------
 let audioCtx = null;
-function beep(freq = 700, dur = 0.05) {
+function beepClick() {
   try {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     const t = audioCtx.currentTime;
+
     const o = audioCtx.createOscillator();
     const g = audioCtx.createGain();
+
     o.type = "square";
-    o.frequency.setValueAtTime(freq, t);
+    o.frequency.setValueAtTime(780, t);
+    o.frequency.exponentialRampToValueAtTime(520, t + 0.035);
+
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.12, t + 0.01);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(g); g.connect(audioCtx.destination);
-    o.start(t); o.stop(t + dur);
-  } catch {}
+    g.gain.exponentialRampToValueAtTime(0.12, t + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+
+    o.connect(g);
+    g.connect(audioCtx.destination);
+    o.start(t);
+    o.stop(t + 0.055);
+  } catch (_) {}
+}
+
+function beepPerfect() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const t = audioCtx.currentTime;
+
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+
+    o.type = "sine";
+    o.frequency.setValueAtTime(980, t);
+    o.frequency.exponentialRampToValueAtTime(1280, t + 0.05);
+
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.15, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+
+    o.connect(g);
+    g.connect(audioCtx.destination);
+    o.start(t);
+    o.stop(t + 0.10);
+  } catch (_) {}
 }
 
 // ---------------- GAME STATE ----------------
@@ -30,20 +60,27 @@ const Game = {
 
   baseSpeed: 220,
   speed: 220,
-  speedLevel: 0,
 
   spawnEvery: 0.65,
   spawnTimer: 0,
 
-  combo: 0,
+  speedLevel: 0,
 
+  // Close Call meter (not "combo")
+  closeCalls: 0,      // current streak of close calls
+  closeBest: 0,       // best streak this run
+
+  // overlay + boost effects
   overlayText: "",
   overlayT: 0,
-  boostT: 0
+  boostT: 0,
+
+  // death popup state
+  diedNewBest: false
 };
 
 const Lanes = 3;
-const laneX = l => (W * (l + 0.5)) / Lanes;
+const laneX = (lane) => (W * (lane + 0.5)) / Lanes;
 
 const Player = {
   lane: 1,
@@ -53,168 +90,300 @@ const Player = {
 
 let Obstacles = [];
 
+// Prevent double-trigger on mobile (touchstart + click)
+let lastTapMs = 0;
+
 // ---------------- RESET ----------------
 function reset() {
   Game.running = true;
   Game.score = 0;
-  Game.combo = 0;
 
-  Game.speedLevel = 0;
+  Game.baseSpeed = 220;
   Game.speed = Game.baseSpeed;
 
   Game.spawnEvery = 0.65;
   Game.spawnTimer = 0;
 
+  Game.speedLevel = 0;
+
+  Game.closeCalls = 0;
+  Game.closeBest = 0;
+
   Game.overlayText = "";
   Game.overlayT = 0;
   Game.boostT = 0;
+
+  Game.diedNewBest = false;
 
   Player.lane = 1;
   Obstacles = [];
 }
 
-// ---------------- GAMEPLAY ----------------
+function showLevelUpOverlay() {
+  Game.overlayText = "+10% SPEED!";
+  Game.overlayT = 0.85;
+  Game.boostT = 0.35;
+}
+
+function showCloseCallOverlay(streak) {
+  Game.overlayText = `CLOSE CALL x${streak}`;
+  Game.overlayT = 0.55;
+  Game.boostT = 0.12;
+}
+
+// ---------------- CORE MECHANICS ----------------
 function switchLane() {
   if (!Game.running) return;
   Player.lane = (Player.lane + 1) % Lanes;
-  beep(650);
+  beepClick();
 }
 
 function spawnObstacle() {
+  const lane = Math.floor(Math.random() * Lanes);
   Obstacles.push({
-    lane: Math.floor(Math.random() * Lanes),
+    lane,
     y: -30,
     r: 18,
-    scored: false
+    passed: false // important: score once when it passes you
   });
 }
 
-// 40% overlap rule
+// 40% overlap death rule (as agreed)
+// Death only when obstacle penetrates meaningfully, not just a graze.
 function hitDistance(obs) {
-  return Player.r + obs.r * 0.60;
+  return Player.r + obs.r * 0.60; // <-- 40% overlap required
+}
+
+function centerDistanceToPlayer(obs) {
+  const px = laneX(Player.lane), py = Player.y;
+  const ox = laneX(obs.lane), oy = obs.y;
+  return Math.hypot(px - ox, py - oy);
+}
+
+function die() {
+  // update best
+  const oldBest = Game.best;
+  if (Game.score > oldBest) {
+    Game.best = Game.score;
+    Game.diedNewBest = true;
+    localStorage.setItem("odBest", String(Game.best));
+  } else {
+    Game.diedNewBest = false;
+  }
+  Game.running = false;
 }
 
 // ---------------- UPDATE ----------------
 function update(dt) {
-  if (Game.overlayT > 0) Game.overlayT -= dt;
-  if (Game.boostT > 0) Game.boostT -= dt;
+  // timers (run even when dead)
+  if (Game.overlayT > 0) Game.overlayT = Math.max(0, Game.overlayT - dt);
+  if (Game.boostT > 0) Game.boostT = Math.max(0, Game.boostT - dt);
+
   if (!Game.running) return;
 
+  // Spawn pacing (kept from the good version)
   Game.spawnEvery = Math.max(0.32, 0.65 - Game.score * 0.002);
 
+  // Spawn
   Game.spawnTimer += dt;
   if (Game.spawnTimer >= Game.spawnEvery) {
     spawnObstacle();
     Game.spawnTimer = 0;
   }
 
+  // Move + collisions + scoring
   for (const o of Obstacles) {
     o.y += Game.speed * dt;
 
-    const px = laneX(Player.lane), py = Player.y;
-    const ox = laneX(o.lane), oy = o.y;
-    const d = Math.hypot(px - ox, py - oy);
-
-    // death
+    // collision check
+    const d = centerDistanceToPlayer(o);
     if (d < hitDistance(o)) {
-      Game.running = false;
-      Game.best = Math.max(Game.best, Game.score);
-      localStorage.setItem("odBest", String(Game.best));
-      Game.combo = 0;
+      die();
       return;
     }
 
-    // PERFECT DODGE CHECK
-    if (!o.scored && o.lane === Player.lane && o.y > Player.y) {
-      const perfectMargin = 8; // pixels
-      if (d <= hitDistance(o) + perfectMargin) {
-        Game.combo++;
-        Game.score += Game.combo; // bonus scales
-        Game.overlayText = `PERFECT x${Game.combo}`;
-        Game.overlayT = 0.6;
-        beep(980);
-      } else {
-        Game.combo = 0;
-        Game.score += 1;
-      }
-      o.scored = true;
+    // scoring event: when obstacle crosses player Y (once)
+    // This makes score follow the actual "dodge flow", not "random"
+    if (!o.passed && o.y >= Player.y) {
+      o.passed = true;
 
-      // SPEED SCALING — TRUE 10%
-      const lvl = Math.floor(Game.score / 10);
-      if (lvl !== Game.speedLevel) {
-        Game.speedLevel = lvl;
+      // Base point for dodging an obstacle (always)
+      Game.score += 1;
+
+      // Close Call rule (Option A):
+      // - same lane
+      // - near miss window: just outside hit distance
+      // Tune this margin to taste.
+      const sameLane = (o.lane === Player.lane);
+      const margin = 10; // px: increase for more close calls; decrease to make it rarer
+
+      const nearMiss = sameLane && (d >= hitDistance(o)) && (d <= hitDistance(o) + margin);
+
+      if (nearMiss) {
+        Game.closeCalls += 1;
+        Game.closeBest = Math.max(Game.closeBest, Game.closeCalls);
+
+        // Bonus points (small but meaningful, feels earned)
+        // You can change this to +1 if you want it calmer.
+        Game.score += Game.closeCalls;
+
+        showCloseCallOverlay(Game.closeCalls);
+        beepPerfect();
+      } else {
+        // Not a close call -> streak resets
+        Game.closeCalls = 0;
+      }
+
+      // Speed scaling: TRUE +10% every 10 points (NOT 20%)
+      const newLevel = Math.floor(Game.score / 10);
+      if (newLevel !== Game.speedLevel) {
+        Game.speedLevel = newLevel;
         Game.speed = Game.baseSpeed * Math.pow(1.10, Game.speedLevel);
-        Game.overlayText = "+10% SPEED!";
-        Game.overlayT = 0.8;
-        Game.boostT = 0.35;
+        showLevelUpOverlay();
       }
     }
   }
 
-  Obstacles = Obstacles.filter(o => o.y < H + 40);
+  // Cleanup offscreen obstacles
+  Obstacles = Obstacles.filter(o => o.y < H + 60);
 }
 
 // ---------------- DRAW ----------------
+function drawPopupMenu() {
+  const boxW = 300;
+  const boxH = 210;
+  const x = (W - boxW) / 2;
+  const y = (H - boxH) / 2;
+
+  ctx.fillStyle = "rgba(0,0,0,0.65)";
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = "rgba(20,20,30,0.92)";
+  ctx.fillRect(x, y, boxW, boxH);
+
+  ctx.strokeStyle = "rgba(255,255,255,0.10)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, boxW, boxH);
+
+  ctx.fillStyle = "#fff";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  ctx.font = "bold 28px system-ui";
+  ctx.fillText("Game Over", W / 2, y + 42);
+
+  ctx.font = "16px system-ui";
+  ctx.fillStyle = "rgba(255,255,255,0.92)";
+  ctx.fillText(`Score: ${Game.score}`, W / 2 - 70, y + 92);
+  ctx.fillText(`Best: ${Game.best}`,  W / 2 + 70, y + 92);
+
+  ctx.fillStyle = "rgba(255,255,255,0.85)";
+  ctx.fillText(`Close Call Best: x${Game.closeBest}`, W / 2, y + 120);
+
+  if (Game.diedNewBest && Game.score > 0) {
+    ctx.fillStyle = "#ffd54a";
+    ctx.font = "bold 14px system-ui";
+    ctx.fillText("NEW BEST!", W / 2, y + 145);
+  }
+
+  ctx.fillStyle = "rgba(255,255,255,0.85)";
+  ctx.font = "14px system-ui";
+  ctx.fillText("Tap to restart", W / 2, y + 172);
+  ctx.fillText("or press R / Restart button", W / 2, y + 192);
+
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+}
+
 function draw() {
   ctx.clearRect(0, 0, W, H);
 
+  // background
   const g = ctx.createLinearGradient(0, 0, 0, H);
   g.addColorStop(0, "#0b1220");
   g.addColorStop(1, "#071018");
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, W, H);
 
+  // boost flash effect (subtle)
   if (Game.boostT > 0) {
-    ctx.fillStyle = `rgba(255,215,0,${0.1 * (Game.boostT / 0.35)})`;
+    const a = Math.min(1, Game.boostT / 0.35);
+    ctx.fillStyle = `rgba(255, 215, 0, ${0.10 * a})`;
     ctx.fillRect(0, 0, W, H);
   }
 
+  // lane dividers
   ctx.globalAlpha = 0.18;
   ctx.strokeStyle = "#fff";
+  ctx.lineWidth = 2;
   for (let i = 1; i < Lanes; i++) {
     const x = (W * i) / Lanes;
-    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, H);
+    ctx.stroke();
   }
   ctx.globalAlpha = 1;
 
+  // HUD bar
+  ctx.fillStyle = "rgba(255,255,255,0.08)";
+  ctx.fillRect(0, 0, W, 60);
+
+  ctx.fillStyle = "#fff";
+  ctx.font = "bold 18px system-ui";
+  ctx.fillText("Obstacle Dodge", 14, 38);
+
+  ctx.font = "14px system-ui";
+  ctx.fillText(`Score: ${Game.score}   Best: ${Game.best}`, W - 210, 38);
+
+  // Close Call meter (rename requested)
+  ctx.fillStyle = "rgba(255,255,255,0.85)";
+  ctx.font = "13px system-ui";
+  ctx.fillText(`Close Calls: x${Game.closeCalls}`, 14, 56);
+
+  // player
+  const px = laneX(Player.lane);
   ctx.fillStyle = "#f1c40f";
   ctx.beginPath();
-  ctx.arc(laneX(Player.lane), Player.y, Player.r, 0, Math.PI * 2);
+  ctx.arc(px, Player.y, Player.r, 0, Math.PI * 2);
   ctx.fill();
 
+  // obstacles
   ctx.fillStyle = "#e74c3c";
   for (const o of Obstacles) {
+    const ox = laneX(o.lane);
     ctx.beginPath();
-    ctx.arc(laneX(o.lane), o.y, o.r, 0, Math.PI * 2);
+    ctx.arc(ox, o.y, o.r, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  ctx.fillStyle = "#fff";
-  ctx.font = "14px system-ui";
-  ctx.fillText(`Score: ${Game.score}   Best: ${Game.best}   Combo: x${Game.combo}`, 12, 28);
-
+  // overlay banner
   if (Game.overlayT > 0) {
+    const alpha = Math.min(1, Game.overlayT / 0.15);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+
     ctx.fillStyle = "rgba(0,0,0,0.35)";
-    ctx.fillRect(0, 60, W, 44);
+    ctx.fillRect(0, 70, W, 46);
+
     ctx.fillStyle = "#ffd54a";
     ctx.font = "bold 18px system-ui";
     ctx.textAlign = "center";
-    ctx.fillText(Game.overlayText, W / 2, 88);
+    ctx.textBaseline = "middle";
+    ctx.fillText(Game.overlayText, W / 2, 93);
+
+    ctx.restore();
     ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
   }
 
+  // popup on death
   if (!Game.running) {
-    ctx.fillStyle = "rgba(0,0,0,0.6)";
-    ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = "#fff";
-    ctx.font = "bold 28px system-ui";
-    ctx.fillText("Game Over", W / 2 - 80, H / 2 - 10);
-    ctx.font = "16px system-ui";
-    ctx.fillText("Tap / R to restart", W / 2 - 70, H / 2 + 20);
+    drawPopupMenu();
   }
 }
 
-// ---------------- LOOP ----------------
+// ---------------- MAIN LOOP ----------------
 let last = performance.now();
 function loop(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
@@ -226,19 +395,30 @@ function loop(now) {
 requestAnimationFrame(loop);
 
 // ---------------- CONTROLS ----------------
-window.addEventListener("keydown", e => {
-  if (e.code === "Space") { e.preventDefault(); switchLane(); }
-  if (e.key.toLowerCase() === "r") reset();
+window.addEventListener("keydown", (e) => {
+  const k = e.key.toLowerCase();
+  if (e.code === "Space" || k === " ") { e.preventDefault(); switchLane(); }
+  if (k === "r") reset();
 });
 
+// Tap = switch lane (alive) / restart (dead)
 function handleTap(e) {
+  // stop Safari from scrolling / selecting
   e.preventDefault();
-  if (!Game.running) reset();
-  else switchLane();
+
+  // block double fire (touchstart + click)
+  const now = Date.now();
+  if (now - lastTapMs < 350) return;
+  lastTapMs = now;
+
+  if (!Game.running) { reset(); return; }
+  switchLane();
 }
+
 c.addEventListener("touchstart", handleTap, { passive: false });
 c.addEventListener("click", handleTap, { passive: false });
 
 restartBtn.addEventListener("click", reset);
 
+// Init
 reset();
