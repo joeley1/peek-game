@@ -75,6 +75,10 @@ const Game = {
   overlayT: 0,
   boostT: 0,
 
+  // NEW: near-miss ring flash
+  flashT: 0,          // seconds remaining
+  flashDur: 0.18,     // total duration
+
   // death popup state
   diedNewBest: false
 };
@@ -112,6 +116,8 @@ function reset() {
   Game.overlayText = "";
   Game.overlayT = 0;
   Game.boostT = 0;
+
+  Game.flashT = 0;
 
   Game.diedNewBest = false;
 
@@ -179,6 +185,9 @@ function update(dt) {
   if (Game.overlayT > 0) Game.overlayT = Math.max(0, Game.overlayT - dt);
   if (Game.boostT > 0) Game.boostT = Math.max(0, Game.boostT - dt);
 
+  // NEW: flash timer
+  if (Game.flashT > 0) Game.flashT = Math.max(0, Game.flashT - dt);
+
   if (!Game.running) return;
 
   // Spawn pacing (kept from the good version)
@@ -224,8 +233,10 @@ function update(dt) {
         Game.closeBest = Math.max(Game.closeBest, Game.closeCalls);
 
         // Bonus points (small but meaningful, feels earned)
-        // You can change this to +1 if you want it calmer.
         Game.score += Game.closeCalls;
+
+        // NEW: ring flash on close call
+        Game.flashT = Game.flashDur;
 
         showCloseCallOverlay(Game.closeCalls);
         beepPerfect();
@@ -348,6 +359,29 @@ function draw() {
   ctx.arc(px, Player.y, Player.r, 0, Math.PI * 2);
   ctx.fill();
 
+  // NEW: near-miss ring flash (only on Close Call)
+  if (Game.flashT > 0) {
+    const t = 1 - (Game.flashT / Game.flashDur); // 0 -> 1
+    const alpha = (1 - t) * 0.9;                 // fade out
+    const ringR = Player.r + 6 + t * 14;         // expands
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = "#ffd54a";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(px, Player.y, ringR, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // small inner ring for pop
+    ctx.globalAlpha = alpha * 0.6;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(px, Player.y, ringR - 8, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   // obstacles
   ctx.fillStyle = "#e74c3c";
   for (const o of Obstacles) {
@@ -403,7 +437,6 @@ window.addEventListener("keydown", (e) => {
 
 // Tap = switch lane (alive) / restart (dead)
 function handleTap(e) {
-  // stop Safari from scrolling / selecting
   e.preventDefault();
 
   // block double fire (touchstart + click)
