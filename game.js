@@ -326,7 +326,7 @@ function draw() {
   ctx.fillStyle = "#fff";
   ctx.textAlign = "left";
   ctx.font = "16px system-ui";
-  ctx.fillText(`Score: ${Game.score}`, 16, 28);
+  ctx.fillText(`Close Calls: ${Game.closeCalls}`, 16, 52);
   ctx.fillText(`Close Calls: ${Game.closeCalls} (Streak: ${Game.streak})`, 16, 52);
 
   ctx.font = "13px system-ui";
