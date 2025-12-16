@@ -10,47 +10,18 @@ const LANES = 3;
 const BASE_SPEED_PX = 280;      // pixels/second baseline
 const SPEED_INCREMENT = 0.10;   // +10% every 10 points
 
-// Close call tuning
-const CLOSE_MARGIN_PX = 35;     // you chose 20
+// Overlap rules (ratio of obstacle radius)
+const KILL_OVERLAP_RATIO = 0.40;   // die if overlap > 40% of obstacle radius
+const CLOSE_LOW_RATIO = 0.30;      // close call if overlap reached >= 30% (but < 40%)
 
-const Player = {
-  lane: 0,
-  x: 0,
-  y: H - 120,
-  r: 18,
-  targetX: 0
-};
-
-const Game = {
-  running: true,
-  score: 0,
-  best: Number(localStorage.getItem("best") || 0),
-
-  // derived each frame:
-  speedMul: 1.0,
-  speedPx: BASE_SPEED_PX,
-
-  closeCalls: 0,
-  streak: 0,
-  maxStreak: 0,
-
-  shakeT: 0,
-  shakeMag: 0
-};
-
-let obstacles = [];
-let spawnAcc = 0;
-
-// ---------- AUDIO (unlocked correctly) ----------
+// Audio / UX
 let audioCtx = null;
-
 function ensureAudioUnlocked() {
   try {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     if (audioCtx.state === "suspended") audioCtx.resume();
   } catch (_) {}
 }
-
 function playClick() {
   try {
     ensureAudioUnlocked();
@@ -74,13 +45,11 @@ function playClick() {
     o.stop(t + 0.07);
   } catch (_) {}
 }
-
 function playDeath() {
   try {
     ensureAudioUnlocked();
     if (!audioCtx) return;
 
-    // Harsh “drop” sound (more aggressive than before)
     const t = audioCtx.currentTime;
     const o = audioCtx.createOscillator();
     const g = audioCtx.createGain();
@@ -100,14 +69,40 @@ function playDeath() {
   } catch (_) {}
 }
 
-// ---------- helpers ----------
+const Player = {
+  lane: 0,
+  x: 0,
+  y: H - 120,
+  r: 18,
+  targetX: 0
+};
+
+const Game = {
+  running: true,
+  score: 0,
+  best: Number(localStorage.getItem("best") || 0),
+
+  speedMul: 1.0,
+  speedPx: BASE_SPEED_PX,
+
+  closeCalls: 0,
+  streak: 0,
+  maxStreak: 0,
+
+  shakeT: 0,
+  shakeMag: 0
+};
+
+let obstacles = [];
+let spawnAcc = 0;
+
 function laneX(lane) {
   return (W / (LANES + 1)) * (lane + 1);
 }
 
 function updateSpeedFromScore() {
   const level = Math.floor(Game.score / 10);
-  Game.speedMul = Math.pow(1 + SPEED_INCREMENT, level);   // 1.00, 1.10, 1.21, ...
+  Game.speedMul = Math.pow(1 + SPEED_INCREMENT, level);   // 1.00, 1.10, 1.21...
   Game.speedPx = BASE_SPEED_PX * Game.speedMul;
 }
 
@@ -116,9 +111,16 @@ function spawnObstacle() {
     lane: Math.floor(Math.random() * LANES),
     y: -30,
     r: 20,
-    hit: false,
-    checked: false,
-    scored: false
+
+    // scoring
+    scored: false,
+
+    // NEW: track closest approach (max overlap) while alive
+    maxOverlap: -9999,
+    maxOverlapSameLane: false,
+
+    // NEW: evaluated close call once
+    closeEvaluated: false
   });
 }
 
@@ -146,10 +148,9 @@ Player.x = laneX(Player.lane);
 Player.targetX = Player.x;
 updateSpeedFromScore();
 
-// ---------- INPUT ----------
+// INPUT
 document.addEventListener("keydown", (e) => {
   ensureAudioUnlocked();
-
   const k = e.key.toLowerCase();
 
   if (!Game.running && k === "r") {
@@ -186,13 +187,12 @@ canvas.addEventListener("pointerdown", (e) => {
   playClick();
 }, { passive: false });
 
-// ---------- GAME LOOP ----------
 function update(dt) {
-  // Smooth lane movement (dt-safe)
-  const smoothing = 18; // higher = snappier
+  // Smooth lane movement
+  const smoothing = 18;
   Player.x += (Player.targetX - Player.x) * (1 - Math.exp(-smoothing * dt));
 
-  // Effects timers (even if dead, shake still drawn)
+  // Shake timer continues even if dead (so you can see the shake)
   if (Game.shakeT > 0) {
     Game.shakeT -= dt;
     if (Game.shakeT < 0) Game.shakeT = 0;
@@ -200,30 +200,35 @@ function update(dt) {
 
   if (!Game.running) return;
 
-  // Spawn logic: roughly consistent with earlier feel
-  // Spawn interval decreases slightly as score increases
-  const spawnInterval = Math.max(0.45, 0.90 - Game.score * 0.01); // seconds
+  // Spawn (slightly ramps)
+  const spawnInterval = Math.max(0.45, 0.90 - Game.score * 0.01);
   spawnAcc += dt;
   while (spawnAcc >= spawnInterval) {
     spawnObstacle();
     spawnAcc -= spawnInterval;
   }
 
-  // Move obstacles + evaluate
   for (const o of obstacles) {
+    // move
     o.y += Game.speedPx * dt;
 
+    // compute geometry
     const ox = laneX(o.lane);
     const dist = Math.hypot(Player.x - ox, Player.y - o.y);
     const overlap = (Player.r + o.r) - dist;
 
-    // 40% “bite” rule:
-    // Require overlap > 0.4 * obstacle radius (not player radius)
-    // This matches your original intent more closely.
-    const killOverlap = 0.40 * o.r;
+    // Track max overlap while alive (this fixes your bug)
+    // We only care about same-lane close calls.
+    if (o.lane === Player.lane) {
+      if (overlap > o.maxOverlap) {
+        o.maxOverlap = overlap;
+        o.maxOverlapSameLane = true;
+      }
+    }
 
-    if (!o.hit && overlap > killOverlap) {
-      o.hit = true;
+    // Death rule
+    const killOverlap = KILL_OVERLAP_RATIO * o.r;
+    if (overlap > killOverlap) {
       Game.running = false;
 
       Game.shakeT = 0.25;
@@ -235,39 +240,39 @@ function update(dt) {
       break;
     }
 
-    // Close call check once, when obstacle crosses player Y
-    if (!o.checked && o.y > Player.y) {
-      o.checked = true;
+    // Score when obstacle leaves bottom
+    if (!o.scored && o.y > H + 40) {
+      o.scored = true;
+      Game.score++;
+      updateSpeedFromScore(); // ✅ exact +10% steps every 10 points
+    }
 
-      const hitD = (Player.r + o.r) - killOverlap; // threshold distance where kill starts
-      // Close call: just outside kill threshold, same lane
-      if (o.lane === Player.lane && dist >= hitD && dist <= hitD + CLOSE_MARGIN_PX) {
+    // Evaluate close call once, after obstacle has passed your Y (so the "closest moment" is already recorded)
+    if (!o.closeEvaluated && o.y > Player.y + 30) {
+      o.closeEvaluated = true;
+
+      // Close call if max overlap reached 30–39% of obstacle radius, same lane at that moment
+      const closeLow = CLOSE_LOW_RATIO * o.r;
+
+      if (o.maxOverlapSameLane && o.maxOverlap >= closeLow && o.maxOverlap < killOverlap) {
         Game.closeCalls++;
         Game.streak++;
         Game.maxStreak = Math.max(Game.maxStreak, Game.streak);
 
-        // tiny shake for feedback (optional)
+        // subtle feedback
         Game.shakeT = 0.10;
         Game.shakeMag = 2;
       } else {
         Game.streak = 0;
       }
     }
-
-    // Score when obstacle fully leaves screen bottom
-    if (!o.scored && o.y > H + 40) {
-      o.scored = true;
-      Game.score++;
-      updateSpeedFromScore(); // ✅ speed updates exactly every 10 points
-    }
   }
 
-  // Cleanup
+  // cleanup
   obstacles = obstacles.filter(o => o.y < H + 120);
 }
 
 function draw() {
-  // Shake translate (visual)
   let sx = 0, sy = 0;
   if (Game.shakeT > 0) {
     sx = (Math.random() - 0.5) * Game.shakeMag;
@@ -277,12 +282,11 @@ function draw() {
   ctx.save();
   ctx.translate(sx, sy);
 
-  // Background
   ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = "#0b1220";
   ctx.fillRect(0, 0, W, H);
 
-  // Lane dividers
+  // Lane lines
   ctx.strokeStyle = "rgba(255,255,255,0.08)";
   ctx.lineWidth = 2;
   for (let i = 1; i < LANES; i++) {
@@ -314,12 +318,10 @@ function draw() {
   ctx.fillText(`Best: ${Game.best}`, W - 90, 28);
   ctx.fillText(`Close Calls: ${Game.closeCalls}  (Streak: ${Game.streak})`, 16, 52);
 
-  // Show speed multiplier so you can verify 10% steps:
   ctx.font = "13px system-ui";
   ctx.fillStyle = "rgba(255,255,255,0.8)";
   ctx.fillText(`Speed x${Game.speedMul.toFixed(2)}  (+10% every 10 pts)`, 16, 74);
 
-  // Game over overlay
   if (!Game.running) {
     ctx.fillStyle = "rgba(0,0,0,0.55)";
     ctx.fillRect(0, 0, W, H);
