@@ -11,7 +11,7 @@ const BASE_SPEED_PX = 280;      // pixels/second baseline
 const SPEED_INCREMENT = 0.10;   // +10% every 10 points
 
 // Close call tuning
-const CLOSE_MARGIN_PX = 20;     // you chose 20
+const CLOSE_MARGIN_PX = 35;     // you chose 20
 
 const Player = {
   lane: 0,
