@@ -269,6 +269,22 @@ window.addEventListener("keydown", e => {
   if (e.key.toLowerCase() === "r" && !Game.running) restart();
 });
 
-canvas.addEventListener("pointerdown", () => {
-  if (!Game.running) restart();
+canvas.addEventListener("pointerdown", (e) => {
+  // Restart if dead
+  if (!Game.running) {
+    restart();
+    return;
+  }
+
+  // Mobile lane control
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+
+  if (x < W / 2 && Player.lane > 0) {
+    Player.lane--;
+  } else if (x >= W / 2 && Player.lane < LANES - 1) {
+    Player.lane++;
+  }
+
+  Player.targetX = laneX(Player.lane);
 });
