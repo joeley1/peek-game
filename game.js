@@ -1,15 +1,72 @@
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
-// IMPORTANT: do NOT override your HTML canvas size.
-// Your index.html already sets width/height.
 const W = canvas.width;
 const H = canvas.height;
 
-const LANES = 3;                // ✅ back to 3 lanes
+const LANES = 3;
 const BASE_SPEED = 4;
-const SPEED_INCREMENT = 0.10;   // 10% every 10 points
+const SPEED_INCREMENT = 0.10; // 10% every 10 points
 
+/* =========================
+   AUDIO (mobile-safe)
+========================= */
+let audioCtx = null;
+
+function getAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  return audioCtx;
+}
+
+function playClick() {
+  const ctxA = getAudio();
+  const t = ctxA.currentTime;
+
+  const o = ctxA.createOscillator();
+  const g = ctxA.createGain();
+
+  o.type = "square";
+  o.frequency.setValueAtTime(700, t);
+  o.frequency.exponentialRampToValueAtTime(450, t + 0.04);
+
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.12, t + 0.005);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.06);
+
+  o.connect(g);
+  g.connect(ctxA.destination);
+
+  o.start(t);
+  o.stop(t + 0.07);
+}
+
+function playDeath() {
+  const ctxA = getAudio();
+  const t = ctxA.currentTime;
+
+  const o = ctxA.createOscillator();
+  const g = ctxA.createGain();
+
+  o.type = "sawtooth";
+  o.frequency.setValueAtTime(220, t);
+  o.frequency.exponentialRampToValueAtTime(70, t + 0.35);
+
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.25, t + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
+
+  o.connect(g);
+  g.connect(ctxA.destination);
+
+  o.start(t);
+  o.stop(t + 0.5);
+}
+
+/* =========================
+   PLAYER
+========================= */
 const Player = {
   lane: 0,
   x: 0,
@@ -33,7 +90,6 @@ let obstacles = [];
 let lastSpawn = 0;
 
 function laneX(lane) {
-  // evenly spaced lanes across the canvas
   return (W / (LANES + 1)) * (lane + 1);
 }
 
@@ -51,11 +107,13 @@ document.addEventListener("keydown", (e) => {
   if ((e.key === "ArrowLeft" || k === "a") && Player.lane > 0) {
     Player.lane--;
     Player.targetX = laneX(Player.lane);
+    playClick();
   }
 
   if ((e.key === "ArrowRight" || k === "d") && Player.lane < LANES - 1) {
     Player.lane++;
     Player.targetX = laneX(Player.lane);
+    playClick();
   }
 });
 
@@ -68,8 +126,9 @@ canvas.addEventListener("pointerdown", (e) => {
     return;
   }
 
-  Player.lane = (Player.lane + 1) % LANES;  // ✅ tap cycles right
+  Player.lane = (Player.lane + 1) % LANES;
   Player.targetX = laneX(Player.lane);
+  playClick();
 });
 
 /* ================= GAME LOGIC ================= */
@@ -106,10 +165,8 @@ function restart() {
 function update() {
   if (!Game.running) return;
 
-  // Smooth movement toward lane
   Player.x += (Player.targetX - Player.x) * 0.15;
 
-  // Spawn
   if (Date.now() - lastSpawn > 900) {
     spawnObstacle();
     lastSpawn = Date.now();
@@ -125,8 +182,7 @@ function update() {
 
     const overlap = (Player.radius + o.radius) - dist;
 
-    // Close call (within 20px margin but not colliding)
-    // Only check once when obstacle passes player area
+    // Close call
     if (!o.checked && o.y > Player.y) {
       o.checked = true;
 
@@ -144,12 +200,13 @@ function update() {
       o.hit = true;
       Game.running = false;
       Game.shake = 12;
+      playDeath();
 
       Game.best = Math.max(Game.best, Game.score);
       localStorage.setItem("best", String(Game.best));
     }
 
-    // Score when obstacle passes below player
+    // Score
     if (o.y > H + 40 && !o.hit) {
       Game.score++;
       updateSpeed();
@@ -163,7 +220,6 @@ function update() {
 function draw() {
   ctx.save();
 
-  // Camera shake on death
   if (Game.shake > 0) {
     ctx.translate(
       (Math.random() - 0.5) * Game.shake,
@@ -174,7 +230,6 @@ function draw() {
 
   ctx.clearRect(0, 0, W, H);
 
-  // Background
   ctx.fillStyle = "#0b1220";
   ctx.fillRect(0, 0, W, H);
 
@@ -225,7 +280,6 @@ function draw() {
     ctx.fillText(`Close Calls: ${Game.closeCalls}`, W / 2, H * 0.58);
     ctx.fillText(`Max Streak: ${Game.maxStreak}`, W / 2, H * 0.63);
     ctx.fillText("Tap or Press R to Restart", W / 2, H * 0.72);
-
     ctx.textAlign = "left";
   }
 
