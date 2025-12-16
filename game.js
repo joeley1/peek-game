@@ -224,7 +224,7 @@ function update(dt) {
       // - near miss window: just outside hit distance
       // Tune this margin to taste.
       const sameLane = (o.lane === Player.lane);
-      const margin = 10; // px: increase for more close calls; decrease to make it rarer
+      const margin = 20; // px: increase for more close calls; decrease to make it rarer
 
       const nearMiss = sameLane && (d >= hitDistance(o)) && (d <= hitDistance(o) + margin);
 
