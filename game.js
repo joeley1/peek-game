@@ -1,4 +1,4 @@
-const canvas = document.getElementById("game");
+const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
 canvas.width = window.innerWidth;
@@ -115,14 +115,14 @@ function update() {
 
     const overlap = (Player.radius + o.radius) - dist;
 
-    // CLOSE CALL (within 20px but not collision)
+    // CLOSE CALL
     if (overlap > -20 && overlap < 0 && !o.hit) {
       Game.closeCalls++;
       Game.streak++;
       Game.maxStreak = Math.max(Game.maxStreak, Game.streak);
     }
 
-    // COLLISION (40% overlap rule)
+    // COLLISION (40% rule)
     if (overlap > Player.radius * 0.4 && !o.hit) {
       o.hit = true;
       Game.running = false;
