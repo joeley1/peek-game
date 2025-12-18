@@ -720,25 +720,11 @@ function draw() {
     ctx.restore();
 
     // Difficulty selector row + panel behind it
-    const dr = uiDifficultyRow();
-
-    const px = dr.easy.x - 10;
-    const py = dr.easy.y - 10;
-    const pw = (dr.hard.x + dr.hard.w) - px + 10;
-    const ph = dr.easy.h + 20;
-
-    ctx.save();
-    ctx.fillStyle = "rgba(255,255,255,0.08)";
-    roundRect(px, py, pw, ph, 16);
-    ctx.fill();
-    ctx.strokeStyle = "rgba(255,255,255,0.14)";
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    ctx.restore();
-
-    drawToggle(dr.easy, "Easy", selectedMode === "easy");
-    drawToggle(dr.medium, "Medium", selectedMode === "medium");
-    drawToggle(dr.hard, "Hard", selectedMode === "hard");
+    // Difficulty selector row (no dark panel)
+const dr = uiDifficultyRow();
+drawToggle(dr.easy, "Easy", selectedMode === "easy");
+drawToggle(dr.medium, "Medium", selectedMode === "medium");
+drawToggle(dr.hard, "Hard", selectedMode === "hard");
 
     // Info line + instructions
     ctx.fillStyle = "rgba(255,255,255,0.85)";
